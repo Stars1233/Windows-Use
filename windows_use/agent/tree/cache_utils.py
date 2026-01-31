@@ -51,9 +51,25 @@ class CacheRequestFactory:
         # Layout properties
         cache_request.AddProperty(PropertyId.BoundingRectangleProperty)
         
-        # REMOVED: Expensive patterns and less critical properties to improve performance
-        # Patterns like LegacyIAccessible are very expensive to marshal for every element.
-        # We will fetch them live only for the few elements that actually need them.
+        # Patterns
+        cache_request.AddPattern(PatternId.LegacyIAccessiblePattern)
+        cache_request.AddPattern(PatternId.ScrollPattern)
+        cache_request.AddPattern(PatternId.WindowPattern)
+        
+        # LegacyIAccessible properties
+        cache_request.AddProperty(PropertyId.LegacyIAccessibleRoleProperty)
+        cache_request.AddProperty(PropertyId.LegacyIAccessibleValueProperty)
+        cache_request.AddProperty(PropertyId.LegacyIAccessibleDefaultActionProperty)
+        cache_request.AddProperty(PropertyId.LegacyIAccessibleStateProperty)
+
+        # Scroll properties
+        cache_request.AddProperty(PropertyId.ScrollHorizontallyScrollableProperty)
+        cache_request.AddProperty(PropertyId.ScrollVerticallyScrollableProperty)
+        cache_request.AddProperty(PropertyId.ScrollHorizontalScrollPercentProperty)
+        cache_request.AddProperty(PropertyId.ScrollVerticalScrollPercentProperty)
+
+        # Window properties
+        cache_request.AddProperty(PropertyId.WindowIsModalProperty)
         
         return cache_request
 

@@ -5,7 +5,7 @@ from windows_use.agent.tree.cache_utils import CacheRequestFactory,CachedControl
 from windows_use.agent.tree.utils import random_point_within_bounding_box
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING,Optional,Any
-from time import sleep,time
+from time import sleep,perf_counter
 import threading
 import logging
 import random
@@ -35,7 +35,7 @@ class Tree:
         # Reset DOM state to prevent leaks and stale data
         self.dom = None
         self.dom_bounding_box = None
-        start_time = time()
+        start_time = perf_counter()
 
         active_window_flag=False
         if active_window_handle:
@@ -57,7 +57,7 @@ class Tree:
             is_focused=False
         )
         if self.dom:
-            scroll_pattern:ScrollPattern=self.dom.GetPattern(PatternId.ScrollPattern)
+            scroll_pattern:ScrollPattern=self.dom.GetCachedPattern(PatternId.ScrollPattern, True)
             dom_node=ScrollElementNode(
                 name="DOM",
                 control_type="DocumentControl",
@@ -74,7 +74,7 @@ class Tree:
         else:
             dom_node=None
         self.tree_state=TreeState(root_node=root_node,dom_node=dom_node,interactive_nodes=interactive_nodes,scrollable_nodes=scrollable_nodes,dom_informative_nodes=dom_informative_nodes)
-        end_time = time()
+        end_time = perf_counter()
         logger.info(f"[Tree] Tree State capture took {end_time - start_time:.2f} seconds")
         return self.tree_state
 
@@ -193,7 +193,7 @@ class Tree:
                     return None
                 if child.ControlTypeName!='TextControl':
                     return None
-                legacy_pattern=node.GetLegacyIAccessiblePattern()
+                legacy_pattern=node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
                 value=legacy_pattern.Value
                 element_bounding_box = node.BoundingRectangle
                 bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
@@ -214,7 +214,7 @@ class Tree:
             dom_interactive_nodes.pop()
             node=node.GetFirstChildControl()
             control_type='link'
-            legacy_pattern=node.GetLegacyIAccessiblePattern()
+            legacy_pattern=node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
             value=legacy_pattern.Value
             element_bounding_box = node.BoundingRectangle
             bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
@@ -251,7 +251,7 @@ class Tree:
             if scrollable_nodes is not None:
                 if (control_type_name not in (INTERACTIVE_CONTROL_TYPE_NAMES|INFORMATIVE_CONTROL_TYPE_NAMES)) and not is_offscreen:
                     try:
-                        scroll_pattern:ScrollPattern=node.GetPattern(PatternId.ScrollPattern)
+                        scroll_pattern:ScrollPattern=node.GetCachedPattern(PatternId.ScrollPattern, True)
                         if scroll_pattern and scroll_pattern.VerticallyScrollable:
                             box = node.CachedBoundingRectangle
                             x,y=random_point_within_bounding_box(node=node,scale_factor=0.8)
@@ -313,7 +313,7 @@ class Tree:
                         elif control_type_name in (INTERACTIVE_CONTROL_TYPE_NAMES|DOCUMENT_CONTROL_TYPE_NAMES):
                              # Role check
                              try:
-                                legacy_pattern = node.GetLegacyIAccessiblePattern()
+                                legacy_pattern = node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
                                 is_role_interactive = AccessibleRoleNames.get(legacy_pattern.Role, "Default") in INTERACTIVE_ROLES
                              except Exception:
                                 is_role_interactive = False
@@ -331,14 +331,14 @@ class Tree:
                         elif control_type_name == 'GroupControl':
                              if is_browser:
                                  try:
-                                    legacy_pattern = node.GetLegacyIAccessiblePattern()
+                                    legacy_pattern = node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
                                     is_role_interactive = AccessibleRoleNames.get(legacy_pattern.Role, "Default") in INTERACTIVE_ROLES
                                  except Exception:
                                     is_role_interactive = False
                                     
                                  is_default_action = False
                                  try:
-                                     legacy_pattern = node.GetLegacyIAccessiblePattern()
+                                     legacy_pattern = node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
                                      if legacy_pattern.DefaultAction.title() in DEFAULT_ACTIONS:
                                          is_default_action = True
                                  except: pass
@@ -347,7 +347,7 @@ class Tree:
                                      is_interactive = True
 
                         if is_interactive:
-                            legacy_pattern=node.GetLegacyIAccessiblePattern()
+                            legacy_pattern=node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
                             value=legacy_pattern.Value.strip() if legacy_pattern.Value is not None else ""
                             is_focused = node.CachedHasKeyboardFocus
                             name = node.CachedName.strip()
@@ -445,7 +445,7 @@ class Tree:
                             # Inline is_window_modal
                             is_modal = False
                             try:
-                                window_pattern = child.GetWindowPattern()
+                                window_pattern = child.GetCachedPattern(PatternId.WindowPattern, True)
                                 is_modal = window_pattern.IsModal
                             except Exception:
                                 pass
@@ -513,7 +513,7 @@ class Tree:
     def on_focus_change(self, sender:'ctypes.POINTER(IUIAutomationElement)'):
         """Handle focus change events."""
         # Debounce duplicate events
-        current_time = time()
+        current_time = perf_counter()
         element = Control.CreateControlFromElement(sender)
         runtime_id=element.GetRuntimeId()
         event_key = tuple(runtime_id)

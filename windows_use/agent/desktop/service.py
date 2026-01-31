@@ -8,9 +8,9 @@ from windows_use.agent.tree.service import Tree
 from locale import getpreferredencoding
 from contextlib import contextmanager
 from typing import Optional,Literal
+from time import sleep,perf_counter
 from markdownify import markdownify
 from fuzzywuzzy import process
-from time import sleep,time
 from psutil import Process
 import win32process
 import subprocess
@@ -48,7 +48,7 @@ class Desktop:
         
     def get_state(self,use_annotation:bool=True,use_vision:bool=False,as_bytes:bool=False)->DesktopState:
         sleep(0.1)
-        start_time = time()
+        start_time = perf_counter()
 
         controls_handles=self.get_controls_handles() # Taskbar,Program Manager,Apps, Dialogs
         windows,windows_handles=self.get_windows(controls_handles=controls_handles) # Apps
@@ -96,7 +96,7 @@ class Desktop:
             tree_state=tree_state
         )
         # Log the time taken to capture the state
-        end_time = time()
+        end_time = perf_counter()
         logger.info(f"[Desktop] Desktop State capture took {end_time - start_time:.2f} seconds")
         return self.desktop_state
     
