@@ -92,11 +92,29 @@ class ChatGoogle(BaseChatLLM):
         self.top_p = top_p
         self.top_k = top_k
         
+        self.is_gemini_3 = "gemini-3" in self.model.lower()
+        self.is_gemini_2_5 = "gemini-2.5" in self.model.lower()
+        self.is_pro = "pro" in self.model.lower()
+        
         # Calculate thinking budget based on reasoning effort if not explicitly set
         if thinking_budget == -1:
             if reasoning_effort == "none":
+                # For Gemini 2.5 Flash, 0 turns it off. For Pro, it can't be turned off.
+                self.thinking_budget = 0 if not self.is_pro else -1
+                self.thinking_level = None
+            elif self.is_gemini_3:
+                # For Gemini 3, use thinking_level if budget is not set
+                level_map = {
+                    "minimal": "MINIMAL",
+                    "low": "LOW",
+                    "medium": "MEDIUM",
+                    "high": "HIGH",
+                    "xhigh": "HIGH"
+                }
+                self.thinking_level = level_map.get(reasoning_effort, "MEDIUM")
                 self.thinking_budget = -1
             else:
+                # For Gemini 2.x and earlier, calculate budget
                 effort_map = {
                     "minimal": 0.10,
                     "low": 0.20,
@@ -109,8 +127,10 @@ class ChatGoogle(BaseChatLLM):
                 self.thinking_budget = int(self.max_tokens * percentage)
                 # Ensure it's at least some reasonable amount if enabled
                 self.thinking_budget = max(1024, min(self.thinking_budget, self.max_tokens - 1024))
+                self.thinking_level = None
         else:
             self.thinking_budget = thinking_budget
+            self.thinking_level = None
             
         self._client = None
         self._async_client = None
@@ -158,33 +178,40 @@ class ChatGoogle(BaseChatLLM):
 
     def serialize_messages(self, messages: list[BaseMessage]) -> tuple[str | None, list[Content]]:
         """Convert BaseMessage objects to Google GenAI Content format"""
-        serialized = []
+        raw_serialized = []
         system_instruction = None
         
         for message in messages:
             if isinstance(message, SystemMessage):
                 system_instruction = message.content
             elif isinstance(message, HumanMessage):
-                serialized.append(Content(role="user", parts=[Part.from_text(text=message.content)]))
+                raw_serialized.append(Content(role="user", parts=[Part.from_text(text=message.content)]))
             elif isinstance(message, AIMessage):
                 parts = []
                 if message.thinking:
-                    parts.append(Part(thought=message.thinking))
-                parts.append(Part.from_text(text=message.content))
-                serialized.append(Content(role="model", parts=parts))
+                    parts.append(Part(thought=True, text=message.thinking))
+                if message.content:
+                    parts.append(Part(text=message.content, thought_signature=message.thinking_signature))
+                elif message.thinking_signature and parts:
+                    # Attach signature to the thinking part if no content part exists
+                    parts[-1].thought_signature = message.thinking_signature
+                raw_serialized.append(Content(role="model", parts=parts))
             elif isinstance(message, ToolMessage):
                 # Model's function call
                 parts = []
                 if message.thinking:
-                    parts.append(Part(thought=message.thinking))
-                parts.append(Part.from_function_call(name=message.name, args=message.params))
-                serialized.append(Content(
-                    role="model",
-                    parts=parts
-                ))
+                    parts.append(Part(thought=True, text=message.thinking))
+                
+                # Function call part
+                fc_part = Part.from_function_call(name=message.name, args=message.params)
+                if message.thinking_signature:
+                    fc_part.thought_signature = message.thinking_signature
+                parts.append(fc_part)
+                
+                raw_serialized.append(Content(role="model", parts=parts))
                 # User's function response
                 if message.content:
-                    serialized.append(Content(
+                    raw_serialized.append(Content(
                         role="user",
                         parts=[Part.from_function_response(name=message.name, response={"response": message.content})]
                     ))
@@ -193,9 +220,22 @@ class ChatGoogle(BaseChatLLM):
                 images = message.convert_images("bytes")
                 parts = [Part(text=message.content)]
                 parts.extend([Part.from_bytes(data=image, mime_type=message.mime_type) for image in images])
-                serialized.append(Content(role="user", parts=parts))
+                raw_serialized.append(Content(role="user", parts=parts))
             else:
                 raise ValueError(f"Unsupported message type: {type(message)}")
+        
+        # Merge consecutive turns with the same role and ensure the sequence is valid for Google API
+        serialized = []
+        for content in raw_serialized:
+            if serialized and serialized[-1].role == content.role:
+                # Merge parts into the existing content object
+                serialized[-1].parts.extend(content.parts)
+            else:
+                serialized.append(content)
+        
+        # Google API requires the first turn to be from the 'user'
+        if serialized and serialized[0].role != "user":
+            serialized.insert(0, Content(role="user", parts=[Part.from_text(text="Please proceed.")]))
         
         return system_instruction, serialized
 
@@ -234,9 +274,14 @@ class ChatGoogle(BaseChatLLM):
         if self.top_k is not None:
             config["top_k"] = self.top_k
 
-        if self.thinking_budget > 0:
+        if self.thinking_level:
             config["thinking_config"] = {
                 "include_thoughts": True,
+                "thinking_level": self.thinking_level
+            }
+        elif self.thinking_budget >= 0:
+            config["thinking_config"] = {
+                "include_thoughts": self.thinking_budget > 0,
                 "thinking_budget": self.thinking_budget
             }
         
@@ -258,23 +303,29 @@ class ChatGoogle(BaseChatLLM):
         
         return config
 
-    def _extract_text_and_thinking(self, completion) -> tuple[str, str | None]:
-        """Extract text content and thinking from completion"""
+    def _extract_text_and_thinking(self, completion) -> tuple[str, str | None, str | None]:
+        """Extract text content, thinking and thinking signature from completion"""
         text_parts = []
         thinking_parts = []
+        thinking_signature = None
         
         if completion.candidates and completion.candidates[0].content and completion.candidates[0].content.parts:
             for part in completion.candidates[0].content.parts:
-                if part.text:
+                if getattr(part, 'thought', False):
+                    if part.text:
+                        thinking_parts.append(part.text)
+                elif part.text:
                     text_parts.append(part.text)
-                thought = getattr(part, 'thought', None)
-                if thought:
-                    thinking_parts.append(str(thought))
+                
+                # Extract the first thinking signature found
+                sig = getattr(part, 'thought_signature', None)
+                if sig and not thinking_signature:
+                    thinking_signature = sig
         
         text = "".join(text_parts)
         thinking = "".join(thinking_parts) if thinking_parts else None
         
-        return text, thinking
+        return text, thinking, thinking_signature
 
     def _parse_response(self, completion, structured_output: BaseModel | None = None) -> tuple[BaseMessage | BaseModel, str | None]:
         """Parse Google GenAI response into content and thinking"""
@@ -300,20 +351,21 @@ class ChatGoogle(BaseChatLLM):
             except Exception as e:
                 raise ValueError(f"Failed to parse structured output: {e}")
         elif getattr(completion, 'function_calls', None):
-            text, thinking = self._extract_text_and_thinking(completion)
+            text, thinking, thinking_signature = self._extract_text_and_thinking(completion)
             function_call = completion.function_calls[0]
             content = ToolMessage(
                 id="tool-call-id",
                 name=function_call.name,
                 params=function_call.args,
                 content=None,
-                thinking=thinking
+                thinking=thinking,
+                thinking_signature=thinking_signature
             )
         else:
-            text, thinking = self._extract_text_and_thinking(completion)
-            content = AIMessage(content=text, thinking=thinking)
+            text, thinking, thinking_signature = self._extract_text_and_thinking(completion)
+            content = AIMessage(content=text, thinking=thinking, thinking_signature=thinking_signature)
         
-        return content, thinking
+        return content, thinking, thinking_signature
 
     def invoke(self, messages: list[BaseMessage] = [], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
         """Synchronous invocation of Google GenAI chat completion"""
@@ -327,15 +379,17 @@ class ChatGoogle(BaseChatLLM):
                 contents=contents
             ))
             
-            content, thinking = self._parse_response(completion, structured_output)
+            content, thinking, thinking_signature = self._parse_response(completion, structured_output)
             
             return ChatLLMResponse(
                 content=content,
                 thinking=thinking,
+                thinking_signature=thinking_signature,
                 usage=ChatLLMUsage(
                     prompt_tokens=completion.usage_metadata.prompt_token_count or 0,
                     completion_tokens=completion.usage_metadata.candidates_token_count or 0,
-                    total_tokens=completion.usage_metadata.total_token_count or 0
+                    total_tokens=completion.usage_metadata.total_token_count or 0,
+                    thinking_tokens=completion.usage_metadata.thoughts_token_count or 0
                 )
             )
         except Exception as e:
@@ -353,15 +407,17 @@ class ChatGoogle(BaseChatLLM):
                 contents=contents
             )
             
-            content, thinking = self._parse_response(completion, structured_output)
+            content, thinking, thinking_signature = self._parse_response(completion, structured_output)
             
             return ChatLLMResponse(
                 content=content,
                 thinking=thinking,
+                thinking_signature=thinking_signature,
                 usage=ChatLLMUsage(
                     prompt_tokens=completion.usage_metadata.prompt_token_count or 0,
                     completion_tokens=completion.usage_metadata.candidates_token_count or 0,
-                    total_tokens=completion.usage_metadata.total_token_count or 0
+                    total_tokens=completion.usage_metadata.total_token_count or 0,
+                    thinking_tokens=completion.usage_metadata.thoughts_token_count or 0
                 )
             )
         except Exception as e:
@@ -382,11 +438,17 @@ class ChatGoogle(BaseChatLLM):
             for chunk in stream:
                 if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
                     for part in chunk.candidates[0].content.parts:
-                        if part.text:
-                            yield ChatLLMResponse(content=AIMessage(content=part.text))
-                        thought = getattr(part, 'thought', None)
-                        if thought:
-                            yield ChatLLMResponse(thinking=str(thought))
+                        sig = getattr(part, 'thought_signature', None)
+                        if getattr(part, 'thought', False):
+                            if part.text:
+                                yield ChatLLMResponse(thinking=part.text, thinking_signature=sig)
+                        elif part.text:
+                            yield ChatLLMResponse(
+                                content=AIMessage(content=part.text, thinking_signature=sig),
+                                thinking_signature=sig
+                            )
+                        elif sig:
+                            yield ChatLLMResponse(thinking_signature=sig)
         except Exception as e:
             raise RuntimeError(f"Google GenAI API streaming error: {str(e)}")
 
@@ -405,11 +467,17 @@ class ChatGoogle(BaseChatLLM):
             async for chunk in stream:
                 if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
                     for part in chunk.candidates[0].content.parts:
-                        if part.text:
-                            yield ChatLLMResponse(content=AIMessage(content=part.text))
-                        thought = getattr(part, 'thought', None)
-                        if thought:
-                            yield ChatLLMResponse(thinking=str(thought))
+                        sig = getattr(part, 'thought_signature', None)
+                        if getattr(part, 'thought', False):
+                            if part.text:
+                                yield ChatLLMResponse(thinking=part.text, thinking_signature=sig)
+                        elif part.text:
+                            yield ChatLLMResponse(
+                                content=AIMessage(content=part.text, thinking_signature=sig),
+                                thinking_signature=sig
+                            )
+                        elif sig:
+                            yield ChatLLMResponse(thinking_signature=sig)
         except Exception as e:
             raise RuntimeError(f"Google GenAI API streaming error: {str(e)}")
 
@@ -426,8 +494,12 @@ class ChatGoogle(BaseChatLLM):
         except Exception as e:
             # Fallback to default context windows for known models
             context_windows = {
-                "gemini-2.0-flash-exp": 1000000,
+                "gemini-3-pro": 2000000,
+                "gemini-3-flash": 1000000,
+                "gemini-2.5-pro": 2000000,
+                "gemini-2.5-flash": 1000000,
                 "gemini-2.5-flash-lite": 1000000,
+                "gemini-2.0-flash-exp": 1000000,
                 "gemini-1.5-pro": 2000000,
                 "gemini-1.5-flash": 1000000,
                 "gemini-1.0-pro": 32760,

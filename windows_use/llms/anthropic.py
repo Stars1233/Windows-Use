@@ -259,7 +259,8 @@ class ChatAnthropic(BaseChatLLM):
                 usage=ChatLLMUsage(
                     prompt_tokens=completion.usage.input_tokens,
                     completion_tokens=completion.usage.output_tokens,
-                    total_tokens=completion.usage.input_tokens + completion.usage.output_tokens
+                    total_tokens=completion.usage.input_tokens + completion.usage.output_tokens,
+                    thinking_tokens=getattr(completion.usage, 'thinking_tokens', 0)
                 )
             )
         except Exception as e:
@@ -317,7 +318,8 @@ class ChatAnthropic(BaseChatLLM):
                 usage=ChatLLMUsage(
                     prompt_tokens=completion.usage.input_tokens,
                     completion_tokens=completion.usage.output_tokens,
-                    total_tokens=completion.usage.input_tokens + completion.usage.output_tokens
+                    total_tokens=completion.usage.input_tokens + completion.usage.output_tokens,
+                    thinking_tokens=getattr(completion.usage, 'thinking_tokens', 0)
                 )
             )
         except Exception as e:

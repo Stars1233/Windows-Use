@@ -6,10 +6,12 @@ class ChatLLMUsage(BaseModel):
     completion_tokens: int
     total_tokens: int
     image_tokens: int|None = None
+    thinking_tokens: int|None = None
 
 class ChatLLMResponse(BaseModel):
-    content: AIMessage|ToolMessage|BaseModel
+    content: AIMessage|ToolMessage|BaseModel|None = None
     thinking: str|None = None
+    thinking_signature: str|bytes|None = None
     usage: ChatLLMUsage|None = None
 
 class ModelMetadata(BaseModel):

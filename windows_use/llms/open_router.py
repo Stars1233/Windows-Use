@@ -247,7 +247,8 @@ class ChatOpenRouter(BaseChatLLM):
                 usage=ChatLLMUsage(
                     prompt_tokens=completion.usage.prompt_tokens,
                     completion_tokens=completion.usage.completion_tokens,
-                    total_tokens=completion.usage.total_tokens
+                    total_tokens=completion.usage.total_tokens,
+                    thinking_tokens=getattr(completion.usage, 'reasoning_tokens', 0) or getattr(completion.usage, 'thinking_tokens', 0)
                 )
             )
         except Exception as e:
@@ -291,7 +292,8 @@ class ChatOpenRouter(BaseChatLLM):
                 usage=ChatLLMUsage(
                     prompt_tokens=completion.usage.prompt_tokens,
                     completion_tokens=completion.usage.completion_tokens,
-                    total_tokens=completion.usage.total_tokens
+                    total_tokens=completion.usage.total_tokens,
+                    thinking_tokens=getattr(completion.usage, 'reasoning_tokens', 0) or getattr(completion.usage, 'thinking_tokens', 0)
                 )
             )
         except Exception as e:

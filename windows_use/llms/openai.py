@@ -268,7 +268,8 @@ class ChatOpenAI(BaseChatLLM):
                 usage=ChatLLMUsage(
                     prompt_tokens=completion.usage.prompt_tokens,
                     completion_tokens=completion.usage.completion_tokens,
-                    total_tokens=completion.usage.total_tokens
+                    total_tokens=completion.usage.total_tokens,
+                    thinking_tokens=getattr(completion.usage.completion_tokens_details, 'reasoning_tokens', 0) if hasattr(completion.usage, 'completion_tokens_details') else 0
                 )
             )
         except Exception as e:
@@ -314,7 +315,8 @@ class ChatOpenAI(BaseChatLLM):
                 usage=ChatLLMUsage(
                     prompt_tokens=completion.usage.prompt_tokens,
                     completion_tokens=completion.usage.completion_tokens,
-                    total_tokens=completion.usage.total_tokens
+                    total_tokens=completion.usage.total_tokens,
+                    thinking_tokens=getattr(completion.usage.completion_tokens_details, 'reasoning_tokens', 0) if hasattr(completion.usage, 'completion_tokens_details') else 0
                 )
             )
         except Exception as e:
