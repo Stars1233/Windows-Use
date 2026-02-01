@@ -11,7 +11,7 @@ from openai.types.shared_params.response_format_json_schema import JSONSchema, R
 from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolMessage
 from openai.types.chat.chat_completion_content_part_image_param import ImageURL
 from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
-from typing import Iterator, AsyncIterator
+from typing import Iterator, AsyncIterator, Literal
 from openai import OpenAI, AsyncOpenAI
 from windows_use.llms.base import BaseChatLLM
 from windows_use.tool.service import Tool
@@ -22,7 +22,6 @@ import json
 import os
 
 
-@dataclass
 class ChatOpenAI(BaseChatLLM):
     def __init__(
         self,
@@ -34,6 +33,7 @@ class ChatOpenAI(BaseChatLLM):
         websocket_base_url: str | None = None,
         temperature: float = 0.7,
         max_retries: int = 3,
+        reasoning_effort: Literal["low", "medium", "high"] = "medium",
         timeout: int | None = None,
         default_headers: dict[str, str] | None = None,
         default_query: dict[str, object] | None = None,
@@ -46,6 +46,7 @@ class ChatOpenAI(BaseChatLLM):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.temperature = temperature
         self.max_retries = max_retries
+        self.reasoning_effort = reasoning_effort
         self.organization = organization
         self.project = project
         self.base_url = base_url
@@ -127,13 +128,15 @@ class ChatOpenAI(BaseChatLLM):
                 content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
                 serialized.append(ChatCompletionUserMessageParam(role="user", content=content))
             elif isinstance(message, AIMessage):
-                content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
-                serialized.append(ChatCompletionAssistantMessageParam(role="assistant", content=content))
+                serialized_msg = {"role": "assistant", "content": message.content}
+                if message.thinking:
+                    serialized_msg["reasoning_content"] = message.thinking
+                serialized.append(serialized_msg)
             elif isinstance(message, ToolMessage):
                 # Assistant Tool Call
-                serialized.append(ChatCompletionAssistantMessageParam(
-                    role="assistant",
-                    tool_calls=[{
+                serialized_msg = {
+                    "role": "assistant",
+                    "tool_calls": [{
                         "id": message.id,
                         "type": "function",
                         "function": {
@@ -141,7 +144,10 @@ class ChatOpenAI(BaseChatLLM):
                             "arguments": json.dumps(message.params)
                         }
                     }]
-                ))
+                }
+                if message.thinking:
+                    serialized_msg["reasoning_content"] = message.thinking
+                serialized.append(serialized_msg)
                 # Tool Result
                 if message.content:
                     serialized.append({
@@ -201,7 +207,8 @@ class ChatOpenAI(BaseChatLLM):
                 id=tool_call.id,
                 name=tool_call.function.name,
                 params=json.loads(tool_call.function.arguments),
-                content=None
+                content=None,
+                thinking=thinking
             )
         elif structured_output:
             try:
@@ -209,7 +216,7 @@ class ChatOpenAI(BaseChatLLM):
             except Exception as e:
                 raise ValueError(f"Failed to parse structured output: {e}")
         else:
-            content = AIMessage(content=message.content or "")
+            content = AIMessage(content=message.content or "", thinking=thinking)
         
         return content, thinking
 
@@ -222,8 +229,11 @@ class ChatOpenAI(BaseChatLLM):
             kwargs = {
                 "model": self.model,
                 "messages": self.serialize_messages(messages),
-                "temperature": self.temperature,
             }
+            if "o1" in self.model or "o3" in self.model:
+                kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
             
             if openai_tools:
                 kwargs["tools"] = openai_tools
@@ -256,8 +266,11 @@ class ChatOpenAI(BaseChatLLM):
             kwargs = {
                 "model": self.model,
                 "messages": self.serialize_messages(messages),
-                "temperature": self.temperature,
             }
+            if "o1" in self.model or "o3" in self.model:
+                kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
             
             if openai_tools:
                 kwargs["tools"] = openai_tools
@@ -290,9 +303,12 @@ class ChatOpenAI(BaseChatLLM):
             kwargs = {
                 "model": self.model,
                 "messages": self.serialize_messages(messages),
-                "temperature": self.temperature,
                 "stream": True,
             }
+            if "o1" in self.model or "o3" in self.model:
+                kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
             
             if openai_tools:
                 kwargs["tools"] = openai_tools
@@ -319,9 +335,12 @@ class ChatOpenAI(BaseChatLLM):
             kwargs = {
                 "model": self.model,
                 "messages": self.serialize_messages(messages),
-                "temperature": self.temperature,
                 "stream": True,
             }
+            if "o1" in self.model or "o3" in self.model:
+                kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
             
             if openai_tools:
                 kwargs["tools"] = openai_tools

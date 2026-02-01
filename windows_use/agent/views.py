@@ -1,22 +1,20 @@
-from pydantic import BaseModel,Field
+from windows_use.agent.desktop.views import DesktopState
+from windows_use.messages import BaseMessage
+from dataclasses import dataclass,field
+from typing import Any
 
-class AgentResult(BaseModel):
-    is_done:bool
+@dataclass
+class AgentResult:
+    is_done:bool=False
     content:str|None=None
     error:str|None=None
 
-class Action(BaseModel):
-    name:str
-    params: dict=Field(default_factory=dict)
-
-    def to_dict(self) -> dict:
-        return {
-            'name': self.name,
-            'params': self.params
-        }
-
-class AgentData(BaseModel):
-    evaluate: str|None=None
-    thought: str|None=None
-    action: Action|None=None
-    observation: str|None=None
+@dataclass
+class AgentState:
+    task:str=''
+    messages:list[BaseMessage]=field(default_factory=list)
+    error_messages:list[BaseMessage]=field(default_factory=list)
+    desktop:DesktopState=None
+    step:int=0
+    max_steps:int=25
+    max_consecutive_failures:int=3

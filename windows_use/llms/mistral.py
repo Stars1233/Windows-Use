@@ -11,7 +11,6 @@ import logging
 import json
 import os
 
-@dataclass
 class ChatMistral(BaseChatLLM):
     def __init__(
         self,
@@ -86,11 +85,18 @@ class ChatMistral(BaseChatLLM):
                 content = [TextChunk(text=message.content)]
                 serialized.append(UserMessage(content=content))
             elif isinstance(message, AIMessage):
-                content = [TextChunk(text=message.content)]
+                content = []
+                if message.thinking:
+                    content.append(ThinkChunk(thinking=[TextChunk(text=message.thinking)]))
+                content.append(TextChunk(text=message.content))
                 serialized.append(AssistantMessage(content=content))
             elif isinstance(message, ToolMessage):
                 # Assistant Tool Call
+                content = []
+                if message.thinking:
+                    content.append(ThinkChunk(thinking=[TextChunk(text=message.thinking)]))
                 serialized.append(AssistantMessage(
+                    content=content,
                     tool_calls=[{
                         "id": message.id,
                         "type": "function",
@@ -193,10 +199,14 @@ class ChatMistral(BaseChatLLM):
                     id=tool_call.id,
                     name=tool_call.function.name,
                     params=json.loads(tool_call.function.arguments),
-                    content=None
+                    content=None,
+                    thinking="".join(thinking_parts) if thinking_parts else None
                 )
             else:
-                content = AIMessage(content="".join(content_parts))
+                content = AIMessage(
+                    content="".join(content_parts),
+                    thinking="".join(thinking_parts) if thinking_parts else None
+                )
             
             thinking = "".join(thinking_parts) if thinking_parts else None
         
@@ -225,7 +235,6 @@ class ChatMistral(BaseChatLLM):
             completion = self.client.chat.complete(**kwargs)
             
             content, thinking = self._parse_response(completion, structured_output)
-            
             return ChatLLMResponse(
                 content=content,
                 thinking=thinking,

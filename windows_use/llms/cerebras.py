@@ -9,14 +9,13 @@ from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
 from windows_use.llms.base import BaseChatLLM
 from windows_use.tool.service import Tool
 from cerebras.cloud.sdk import Cerebras, AsyncCerebras
-from typing import Iterator, AsyncIterator
+from typing import Iterator, AsyncIterator, Literal
 from dataclasses import dataclass
 from pydantic import BaseModel
 from httpx import Client
 import json
 import os
 
-@dataclass
 class ChatCerebras(BaseChatLLM):
     def __init__(
         self,
@@ -26,6 +25,7 @@ class ChatCerebras(BaseChatLLM):
         base_url: str | None = None,
         timeout: float | None = None,
         max_retries: int = 3,
+        reasoning_effort: Literal["low", "medium", "high"] = "medium",
         default_headers: dict[str, str] | None = None,
         default_query: dict[str, object] | None = None,
         http_client: Client | None = None,
@@ -40,6 +40,7 @@ class ChatCerebras(BaseChatLLM):
         self.base_url = base_url
         self.timeout = timeout
         self.max_retries = max_retries
+        self.reasoning_effort = reasoning_effort
         self.default_headers = default_headers
         self.default_query = default_query
         self.http_client = http_client
@@ -109,13 +110,15 @@ class ChatCerebras(BaseChatLLM):
                 content = [MessageUserMessageRequestContentUnionMember1Typed(type="text", text=message.content)]
                 serialized.append(MessageUserMessageRequestTyped(role="user", content=content))
             elif isinstance(message, AIMessage):
-                content = [MessageAssistantMessageRequestContentUnionMember1Typed(type="text", text=message.content)]
-                serialized.append(MessageAssistantMessageRequestTyped(role="assistant", content=content))
+                serialized_msg = {"role": "assistant", "content": message.content}
+                if message.thinking:
+                    serialized_msg["reasoning"] = message.thinking
+                serialized.append(serialized_msg)
             elif isinstance(message, ToolMessage):
                 # Assistant Tool Call
-                serialized.append(MessageAssistantMessageRequestTyped(
-                    role="assistant",
-                    tool_calls=[{
+                serialized_msg = {
+                    "role": "assistant",
+                    "tool_calls": [{
                         "id": message.id,
                         "type": "function",
                         "function": {
@@ -123,7 +126,10 @@ class ChatCerebras(BaseChatLLM):
                             "arguments": json.dumps(message.params)
                         }
                     }]
-                ))
+                }
+                if message.thinking:
+                    serialized_msg["reasoning"] = message.thinking
+                serialized.append(serialized_msg)
                 # Tool Result
                 if message.content:
                     serialized.append({
@@ -175,10 +181,11 @@ class ChatCerebras(BaseChatLLM):
                 id=tool_call.id,
                 name=tool_call.function.name,
                 params=json.loads(tool_call.function.arguments),
-                content=None
+                content=None,
+                thinking=thinking
             )
         else:
-            content = AIMessage(content=message.content)
+            content = AIMessage(content=message.content, thinking=thinking)
         
         return content, thinking
     
@@ -192,6 +199,9 @@ class ChatCerebras(BaseChatLLM):
                 "model": self.model,
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
+                "extra_body": {
+                    "reasoning_effort": self.reasoning_effort
+                }
             }
             
             if cerebras_tools:
@@ -226,6 +236,9 @@ class ChatCerebras(BaseChatLLM):
                 "model": self.model,
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
+                "extra_body": {
+                    "reasoning_effort": self.reasoning_effort
+                }
             }
             
             if cerebras_tools:
@@ -261,6 +274,9 @@ class ChatCerebras(BaseChatLLM):
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
                 "stream": True,
+                "extra_body": {
+                    "reasoning_effort": self.reasoning_effort
+                }
             }
             
             if cerebras_tools:
@@ -290,6 +306,9 @@ class ChatCerebras(BaseChatLLM):
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
                 "stream": True,
+                "extra_body": {
+                    "reasoning_effort": self.reasoning_effort
+                }
             }
             
             if cerebras_tools:

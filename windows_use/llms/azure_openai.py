@@ -6,14 +6,13 @@ from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMes
 from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
 from windows_use.llms.base import BaseChatLLM
 from windows_use.tool.service import Tool
-from typing import Iterator, AsyncIterator
+from typing import Iterator, AsyncIterator, Literal
 from dataclasses import dataclass
 from pydantic import BaseModel
 from httpx import Client
 import json
 import os
 
-@dataclass
 class ChatAzureOpenAI(BaseChatLLM):
     def __init__(
         self,
@@ -24,6 +23,7 @@ class ChatAzureOpenAI(BaseChatLLM):
         api_version: str = "2024-10-21",
         temperature: float = 0.7,
         max_retries: int = 3,
+        reasoning_effort: Literal["low", "medium", "high"] = "medium",
         timeout: float | None = None,
         default_headers: dict[str, str] | None = None,
         default_query: dict[str, object] | None = None,
@@ -39,6 +39,7 @@ class ChatAzureOpenAI(BaseChatLLM):
         self.api_version = api_version
         self.temperature = temperature
         self.max_retries = max_retries
+        self.reasoning_effort = reasoning_effort
         self.timeout = timeout
         self.default_headers = default_headers
         self.default_query = default_query
@@ -108,13 +109,15 @@ class ChatAzureOpenAI(BaseChatLLM):
                 content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
                 serialized.append(ChatCompletionUserMessageParam(role="user", content=content))
             elif isinstance(message, AIMessage):
-                content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
-                serialized.append(ChatCompletionAssistantMessageParam(role="assistant", content=content))
+                serialized_msg = {"role": "assistant", "content": message.content}
+                if message.thinking:
+                    serialized_msg["reasoning_content"] = message.thinking
+                serialized.append(serialized_msg)
             elif isinstance(message, ToolMessage):
                 # Assistant Tool Call
-                serialized.append(ChatCompletionAssistantMessageParam(
-                    role="assistant",
-                    tool_calls=[{
+                serialized_msg = {
+                    "role": "assistant",
+                    "tool_calls": [{
                         "id": message.id,
                         "type": "function",
                         "function": {
@@ -122,7 +125,10 @@ class ChatAzureOpenAI(BaseChatLLM):
                             "arguments": json.dumps(message.params)
                         }
                     }]
-                ))
+                }
+                if message.thinking:
+                    serialized_msg["reasoning_content"] = message.thinking
+                serialized.append(serialized_msg)
                 # Tool Result
                 if message.content:
                     serialized.append({
@@ -182,7 +188,8 @@ class ChatAzureOpenAI(BaseChatLLM):
                 id=tool_call.id,
                 name=tool_call.function.name,
                 params=json.loads(tool_call.function.arguments),
-                content=None
+                content=None,
+                thinking=thinking
             )
         elif structured_output:
             try:
@@ -190,7 +197,7 @@ class ChatAzureOpenAI(BaseChatLLM):
             except Exception as e:
                 raise ValueError(f"Failed to parse structured output: {e}")
         else:
-            content = AIMessage(content=message.content)
+            content = AIMessage(content=message.content, thinking=thinking)
         
         return content, thinking
 
@@ -203,8 +210,11 @@ class ChatAzureOpenAI(BaseChatLLM):
             kwargs = {
                 "model": self.deployment_name,
                 "messages": self.serialize_messages(messages),
-                "temperature": self.temperature,
             }
+            if any(x in (self.model or self.deployment_name).lower() for x in ["o1", "o3"]):
+                kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
             
             if azure_tools:
                 kwargs["tools"] = azure_tools
@@ -237,8 +247,11 @@ class ChatAzureOpenAI(BaseChatLLM):
             kwargs = {
                 "model": self.deployment_name,
                 "messages": self.serialize_messages(messages),
-                "temperature": self.temperature,
             }
+            if any(x in (self.model or self.deployment_name).lower() for x in ["o1", "o3"]):
+                kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
             
             if azure_tools:
                 kwargs["tools"] = azure_tools
@@ -271,9 +284,12 @@ class ChatAzureOpenAI(BaseChatLLM):
             kwargs = {
                 "model": self.deployment_name,
                 "messages": self.serialize_messages(messages),
-                "temperature": self.temperature,
                 "stream": True,
             }
+            if any(x in (self.model or self.deployment_name).lower() for x in ["o1", "o3"]):
+                kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
             
             if azure_tools:
                 kwargs["tools"] = azure_tools
@@ -300,9 +316,12 @@ class ChatAzureOpenAI(BaseChatLLM):
             kwargs = {
                 "model": self.deployment_name,
                 "messages": self.serialize_messages(messages),
-                "temperature": self.temperature,
                 "stream": True,
             }
+            if any(x in (self.model or self.deployment_name).lower() for x in ["o1", "o3"]):
+                kwargs["reasoning_effort"] = self.reasoning_effort
+            else:
+                kwargs["temperature"] = self.temperature
             
             if azure_tools:
                 kwargs["tools"] = azure_tools

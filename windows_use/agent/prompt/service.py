@@ -1,5 +1,4 @@
 from windows_use.agent.desktop.views import DesktopState, Browser
-from windows_use.agent.views import AgentData
 from windows_use.agent.registry.views import ToolResult
 from windows_use.agent.desktop.service import Desktop
 from importlib.resources import files
@@ -11,12 +10,13 @@ import pyautogui as pg
 
 class Prompt:
     @staticmethod
-    def system_prompt(mode:Literal["flash","normal"],desktop:Desktop,browser: Browser,language: str,max_steps:int,instructions: list[str]=[]) -> str:
+    def system(mode:Literal["flash","normal"],desktop:Desktop,browser: Browser,max_steps:int,instructions: list[str]=[]) -> str:
         width, height = pg.size()
         match mode:
             case "flash":
                 template =Path(files('windows_use.agent.prompt').joinpath('system_flash.md')).read_text(encoding='utf-8')
                 return template.format(**{
+                    'max_steps': max_steps,
                     'datetime': datetime.now().strftime('%A, %B %d, %Y'),
                     'os':desktop.get_windows_version(),
                     'browser':browser.value,
@@ -28,7 +28,7 @@ class Prompt:
                     'instructions': '\n'.join(instructions),
                     'download_directory': Path.home().joinpath('Downloads').as_posix(),
                     'os':desktop.get_windows_version(),
-                    'language':language,
+                    'language':desktop.get_default_language(),
                     'browser':browser.value,
                     'home_dir':Path.home().as_posix(),
                     'user':f"{getuser()} ({desktop.get_user_account_type()})",
@@ -37,37 +37,16 @@ class Prompt:
                 })
             case _:
                 raise ValueError(f"Invalid mode: {mode} (must be 'flash' or 'normal')")
-    
-    @staticmethod
-    def action_prompt(agent_data:AgentData) -> str:
-        template = Path(files('windows_use.agent.prompt').joinpath('action.md')).read_text(encoding='utf-8')
-        return template.format(**{
-            'evaluate': agent_data.evaluate,
-            'thought': agent_data.thought,
-            'action_name': agent_data.action.name,
-            'action_input': agent_data.action.params
-        })
-    
-    @staticmethod
-    def previous_observation_prompt(query:str,step:int,max_steps:int,observation: str)-> str:
-        template=Path(files('windows_use.agent.prompt').joinpath('previous_observation.md')).read_text(encoding='utf-8')
-        return template.format(**{
-            'steps': step,
-            'max_steps': max_steps,
-            'observation': observation,
-            'query': query
-        })
          
     @staticmethod
-    def observation_prompt(query:str,step:int,max_steps:int, tool_result:ToolResult,desktop_state: DesktopState) -> str:
+    def human(query:str,step:int,max_steps:int,desktop_state: DesktopState) -> str:
         cursor_location = pg.position()
         tree_state = desktop_state.tree_state
-        template = Path(files('windows_use.agent.prompt').joinpath('observation.md')).read_text(encoding='utf-8')
+        template = Path(files('windows_use.agent.prompt').joinpath('human.md')).read_text(encoding='utf-8')
 
         return template.format(**{
             'steps': step,
             'max_steps': max_steps,
-            'observation': tool_result.content if tool_result.is_success else tool_result.error,
             'active_window': desktop_state.active_window_to_string(),
             'windows': desktop_state.windows_to_string(),
             'cursor_location': f'({cursor_location.x},{cursor_location.y})',
@@ -76,15 +55,6 @@ class Prompt:
             'active_desktop': desktop_state.active_desktop_to_string(),
             'desktops': desktop_state.desktops_to_string(),
             'query':query
-        })
-    
-    @staticmethod
-    def answer_prompt(agent_data: AgentData, tool_result: ToolResult):
-        template = Path(files('windows_use.agent.prompt').joinpath('answer.md')).read_text(encoding='utf-8')
-        return template.format(**{
-            'evaluate': agent_data.evaluate,
-            'thought': agent_data.thought,
-            'final_answer': tool_result.content
         })
 
     

@@ -1,4 +1,4 @@
-from anthropic.types import Message, MessageParam, ImageBlockParam, Base64ImageSourceParam, TextBlockParam, CacheControlEphemeralParam, ToolUseBlockParam, ToolResultBlockParam
+from anthropic.types import Message, MessageParam, ImageBlockParam, Base64ImageSourceParam, TextBlockParam, CacheControlEphemeralParam, ToolUseBlockParam, ToolResultBlockParam, ThinkingBlockParam
 from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolMessage
 from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
 from anthropic import Anthropic, AsyncAnthropic
@@ -7,13 +7,13 @@ from windows_use.llms.base import BaseChatLLM
 from windows_use.tool.service import Tool
 from dataclasses import dataclass
 from pydantic import BaseModel
+from typing import Literal
 from httpx import Client
 import json
 import os
 
-@dataclass
 class ChatAnthropic(BaseChatLLM):
-    def __init__(self, model: str, api_key: str | None = None, thinking_budget: int = -1, temperature: float = 0.7, max_tokens: int = 8192, auth_token: str | None = None, base_url: str | None = None, timeout: float | None = None, max_retries: int = 3, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
+    def __init__(self, model: str, api_key: str | None = None, thinking_budget: int = -1, reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "medium", temperature: float = 0.7, max_tokens: int = 8192, auth_token: str | None = None, base_url: str | None = None, timeout: float | None = None, max_retries: int = 3, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
         self.model = model
         if not api_key and not os.getenv("ANTHROPIC_API_KEY"):
             raise ValueError("ANTHROPIC_API_KEY is not set")
@@ -22,7 +22,31 @@ class ChatAnthropic(BaseChatLLM):
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.base_url = base_url
-        self.thinking_budget = thinking_budget
+        self.reasoning_effort = reasoning_effort
+        
+        # Calculate thinking budget based on reasoning effort if not explicitly set
+        if thinking_budget == -1:
+            if reasoning_effort == "none":
+                self.thinking_budget = -1
+            else:
+                effort_map = {
+                    "minimal": 0.10,
+                    "low": 0.20,
+                    "medium": 0.50,
+                    "high": 0.80,
+                    "xhigh": 0.95
+                }
+                percentage = effort_map.get(reasoning_effort, 0.50)
+                # Anthropic thinking budget must be less than max_tokens
+                # We subtract a small buffer (e.g., 20% or at least some tokens) for the actual response content
+                # However, the user request says reasoning_effort allocates token portion.
+                # We'll follow the percentage but cap it to avoid exhausting all tokens.
+                self.thinking_budget = int(self.max_tokens * percentage)
+                # Ensure it's at least 1024 if enabled, but not more than max_tokens - 1024
+                self.thinking_budget = max(1024, min(self.thinking_budget, self.max_tokens - 1024))
+        else:
+            self.thinking_budget = thinking_budget
+            
         self.timeout = timeout
         self.max_retries = max_retries
         self.default_headers = default_headers
@@ -93,17 +117,23 @@ class ChatAnthropic(BaseChatLLM):
                 content = [TextBlockParam(type="text", text=message.content)]
                 serialized.append(MessageParam(role="user", content=content))
             elif isinstance(message, AIMessage):
-                content = [TextBlockParam(type="text", text=message.content)]
+                content = []
+                if message.thinking:
+                    content.append(ThinkingBlockParam(type="thinking", thinking=message.thinking, signature=message.thinking_signature or "dummy-signature"))
+                content.append(TextBlockParam(type="text", text=message.content))
                 serialized.append(MessageParam(role="assistant", content=content))
             elif isinstance(message, ToolMessage):
                 # 1. The Assistant's Tool Use Request
-                tool_use_block = ToolUseBlockParam(
+                content = []
+                if message.thinking:
+                    content.append(ThinkingBlockParam(type="thinking", thinking=message.thinking, signature=message.thinking_signature or "dummy-signature"))
+                content.append(ToolUseBlockParam(
                     type="tool_use",
                     id=message.id,
                     name=message.name,
                     input=message.params
-                )
-                serialized.append(MessageParam(role="assistant", content=[tool_use_block]))
+                ))
+                serialized.append(MessageParam(role="assistant", content=content))
                 
                 # 2. The User's Tool Result (if executed)
                 if message.content is not None:
@@ -149,24 +179,30 @@ class ChatAnthropic(BaseChatLLM):
             "input_schema": tool.json_schema["parameters"]
         } for tool in tools]
     
-    def _parse_response(self, completion: Message) -> tuple[str, ToolMessage | None, str | None]:
-        """Parse Anthropic response into content, tool_message, and thinking"""
+    def _parse_response(self, completion: Message) -> tuple[str, ToolMessage | None, str | None, str | None]:
+        """Parse Anthropic response into content, tool_message, thinking, and thinking_signature"""
         content = ""
         tool_message = None
         thinking = None
+        thinking_signature = None
         
         for block in completion.content:
             if block.type == "text":
                 content += block.text
+            elif block.type == "thinking":
+                thinking = block.thinking
+                thinking_signature = getattr(block, 'signature', None)
             elif block.type == "tool_use":
                 tool_message = ToolMessage(
                     id=block.id,
                     name=block.name,
                     params=block.input,
-                    content=None
+                    content=None,
+                    thinking=thinking,
+                    thinking_signature=thinking_signature
                 )
         
-        return content, tool_message, thinking
+        return content, tool_message, thinking, thinking_signature
     
     def invoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False):
         try:
@@ -185,21 +221,21 @@ class ChatAnthropic(BaseChatLLM):
                 kwargs["tools"] = anthropic_tools
             
             # Add thinking support for models that support it
-            if self.thinking_budget > 0 and "sonnet" in self.model.lower():
+            if self.thinking_budget > 0 and ("sonnet" in self.model.lower() or "3-7" in self.model.lower()):
                 kwargs["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": self.thinking_budget
                 }
+                kwargs["temperature"] = 1.0
             
             completion = self.client.messages.create(**kwargs)
 
             if not isinstance(completion, Message):
                 raise ValueError("Unexpected response type from Anthropic API")
             
-            content, tool_message, thinking = self._parse_response(completion)
+            content, tool_message, thinking, thinking_signature = self._parse_response(completion)
             
             if tool_message:
-                thinking = content if content else None
                 response_content = tool_message
             elif structured_output:
                 # Parse structured output from JSON
@@ -208,7 +244,7 @@ class ChatAnthropic(BaseChatLLM):
                 except Exception as e:
                     raise ValueError(f"Failed to parse structured output: {e}")
             else:
-                response_content = AIMessage(content=content)
+                response_content = AIMessage(content=content, thinking=thinking, thinking_signature=thinking_signature)
 
             return ChatLLMResponse(
                 content=response_content,
@@ -239,21 +275,21 @@ class ChatAnthropic(BaseChatLLM):
                 kwargs["tools"] = anthropic_tools
             
             # Add thinking support for models that support it
-            if self.thinking_budget > 0 and "sonnet" in self.model.lower():
+            if self.thinking_budget > 0 and ("sonnet" in self.model.lower() or "3-7" in self.model.lower()):
                 kwargs["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": self.thinking_budget
                 }
+                kwargs["temperature"] = 1.0
 
             completion = await self.async_client.messages.create(**kwargs)
 
             if not isinstance(completion, Message):
                 raise ValueError("Unexpected response type from Anthropic API")
             
-            content, tool_message, thinking = self._parse_response(completion)
+            content, tool_message, thinking, thinking_signature = self._parse_response(completion)
             
             if tool_message:
-                thinking = content if content else None
                 response_content = tool_message
             elif structured_output:
                 try:
@@ -261,7 +297,7 @@ class ChatAnthropic(BaseChatLLM):
                 except Exception as e:
                     raise ValueError(f"Failed to parse structured output: {e}")
             else:
-                response_content = AIMessage(content=content)
+                response_content = AIMessage(content=content, thinking=thinking, thinking_signature=thinking_signature)
 
             return ChatLLMResponse(
                 content=response_content,
@@ -291,11 +327,12 @@ class ChatAnthropic(BaseChatLLM):
             if anthropic_tools:
                 kwargs["tools"] = anthropic_tools
             
-            if self.thinking_budget > 0 and "sonnet" in self.model.lower():
+            if self.thinking_budget > 0 and ("sonnet" in self.model.lower() or "3-7" in self.model.lower()):
                 kwargs["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": self.thinking_budget
                 }
+                kwargs["temperature"] = 1.0
 
             with self.client.messages.stream(**kwargs) as stream:
                 for event in stream:
@@ -324,11 +361,12 @@ class ChatAnthropic(BaseChatLLM):
             if anthropic_tools:
                 kwargs["tools"] = anthropic_tools
             
-            if self.thinking_budget > 0 and "sonnet" in self.model.lower():
+            if self.thinking_budget > 0 and ("sonnet" in self.model.lower() or "3-7" in self.model.lower()):
                 kwargs["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": self.thinking_budget
                 }
+                kwargs["temperature"] = 1.0
                 
             async with self.async_client.messages.stream(**kwargs) as stream:
                 async for event in stream:

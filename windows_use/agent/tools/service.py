@@ -20,7 +20,7 @@ def done_tool(answer:str,**kwargs):
     return answer
 
 @Tool('app_tool',model=App)
-def app_tool(mode:Literal['launch','resize','switch'],name:Optional[str]=None,loc:Optional[list[int]]=None,size:Optional[list[int]]=None,**kwargs)->str:
+def app_tool(mode:Literal['launch','resize','switch']='launch',name:Optional[str]=None,loc:Optional[list[int]]=None,size:Optional[list[int]]=None,**kwargs)->str:
     '''
     Manages Windows applications through launch, resize, and window switching operations.
     
@@ -335,7 +335,8 @@ def scrape_tool(url:str,**kwargs)->str:
     desktop_state=desktop.desktop_state
     tree_state=desktop_state.tree_state
     if not tree_state.dom_node:
-        return f'Unable to scrape URL: {url}. No DOM node found.'
+        content=desktop.scrape(url)
+        return f'URL:{url}\nContent:\n{content}'
     dom_node=tree_state.dom_node
     vertical_scroll_percent=dom_node.vertical_scroll_percent
     content='\n'.join([node.text for node in tree_state.dom_informative_nodes])

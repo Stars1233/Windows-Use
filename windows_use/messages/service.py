@@ -8,6 +8,8 @@ import base64
 class BaseMessage(BaseModel):
     role: Literal["system", "human", "ai", "tool"]
     content: str | None = None
+    thinking: str | None = None
+    thinking_signature: str | None = None
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -16,14 +18,14 @@ class SystemMessage(BaseMessage):
     content: str
 
     def __repr__(self) -> str:
-        return f"SystemMessage(content={self.content})"
+        return f"SystemMessage(content={shorten(self.content, width=80,placeholder='...')})"
 
 class HumanMessage(BaseMessage):
     role: Literal["user"] = "human"
     content: str
 
     def __repr__(self) -> str:
-        return f"HumanMessage(content={self.content})"
+        return f"HumanMessage(content={shorten(self.content, width=80,placeholder='...')})"
     
 class ImageMessage(BaseMessage):
     role: Literal["human"] = "human"
@@ -70,14 +72,14 @@ class ImageMessage(BaseMessage):
 
     def __repr__(self) -> str:
         img_desc = shorten(str(self.image), width=30) if self.image else f"{len(self.images)} images"
-        return f"ImageMessage(content={self.content}, image={img_desc}, mime_type={self.mime_type})"
+        return f"ImageMessage(content={shorten(self.content, width=80,placeholder='...')}, image={img_desc}, mime_type={self.mime_type})"
 
 class AIMessage(BaseMessage):
     role: Literal["ai"] = "ai"
     content: str | None = None
 
     def __repr__(self) -> str:
-        return f"AIMessage(content={self.content})"
+        return f"AIMessage(content={self.content}, thinking={shorten(str(self.thinking), width=50, placeholder='...')})"
 
 class ToolMessage(BaseMessage):
     role: Literal["tool"] = "tool"
@@ -87,4 +89,4 @@ class ToolMessage(BaseMessage):
     content: str | None = None # Tool result
 
     def __repr__(self) -> str:
-        return f"ToolMessage(name={self.name}, params={self.params}, content={self.content})"
+        return f"ToolMessage(name={self.name}, id={self.id}, params={self.params}, content={shorten(self.content, width=80,placeholder='...')}, thinking={shorten(str(self.thinking), width=50, placeholder='...')})"

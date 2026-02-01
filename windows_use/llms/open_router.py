@@ -11,7 +11,7 @@ from openai.types.shared_params.response_format_json_schema import JSONSchema, R
 from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolMessage
 from openai.types.chat.chat_completion_content_part_image_param import ImageURL
 from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
-from typing import Iterator, AsyncIterator
+from typing import Iterator, AsyncIterator, Literal
 from windows_use.llms.base import BaseChatLLM
 from windows_use.tool.service import Tool
 from openai import OpenAI, AsyncOpenAI
@@ -23,7 +23,6 @@ import json
 import os
 
 
-@dataclass
 class ChatOpenRouter(BaseChatLLM):
     def __init__(
         self,
@@ -32,6 +31,7 @@ class ChatOpenRouter(BaseChatLLM):
         api_key: str | None = None,
         temperature: float = 0.7,
         max_retries: int = 3,
+        reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "medium",
         timeout: int | None = None,
         default_headers: dict[str, str] | None = None,
         default_query: dict[str, object] | None = None,
@@ -44,6 +44,7 @@ class ChatOpenRouter(BaseChatLLM):
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
         self.temperature = temperature
         self.max_retries = max_retries
+        self.reasoning_effort = reasoning_effort
         self.base_url = base_url or 'https://openrouter.ai/api/v1'
         self.timeout = timeout
         self.default_headers = default_headers
@@ -110,13 +111,16 @@ class ChatOpenRouter(BaseChatLLM):
                 content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
                 serialized.append(ChatCompletionUserMessageParam(role="user", content=content))
             elif isinstance(message, AIMessage):
-                content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
-                serialized.append(ChatCompletionAssistantMessageParam(role="assistant", content=content))
+                serialized_msg = {"role": "assistant", "content": message.content}
+                if message.thinking:
+                    # OpenRouter models often use reasoning_content
+                    serialized_msg["reasoning_content"] = message.thinking
+                serialized.append(serialized_msg)
             elif isinstance(message, ToolMessage):
                 # Assistant Tool Call
-                serialized.append(ChatCompletionAssistantMessageParam(
-                    role="assistant",
-                    tool_calls=[{
+                serialized_msg = {
+                    "role": "assistant",
+                    "tool_calls": [{
                         "id": message.id,
                         "type": "function",
                         "function": {
@@ -124,7 +128,10 @@ class ChatOpenRouter(BaseChatLLM):
                             "arguments": json.dumps(message.params)
                         }
                     }]
-                ))
+                }
+                if message.thinking:
+                    serialized_msg["reasoning_content"] = message.thinking
+                serialized.append(serialized_msg)
                 # Tool Result
                 if message.content:
                     serialized.append({
@@ -185,7 +192,8 @@ class ChatOpenRouter(BaseChatLLM):
                 id=tool_call.id,
                 name=tool_call.function.name,
                 params=json.loads(tool_call.function.arguments),
-                content=None
+                content=None,
+                thinking=thinking
             )
         elif structured_output:
             try:
@@ -193,7 +201,7 @@ class ChatOpenRouter(BaseChatLLM):
             except Exception as e:
                 raise ValueError(f"Failed to parse structured output: {e}")
         else:
-            content = AIMessage(content=message.content or "")
+            content = AIMessage(content=message.content or "", thinking=thinking)
         
         return content, thinking
 
@@ -207,6 +215,11 @@ class ChatOpenRouter(BaseChatLLM):
                 "model": self.model,
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
+                "extra_body": {
+                    "reasoning":{
+                            "effort": self.reasoning_effort
+                        }
+                }
             }
             
             if or_tools:
@@ -241,6 +254,11 @@ class ChatOpenRouter(BaseChatLLM):
                 "model": self.model,
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
+                "extra_body": {
+                    "reasoning":{
+                            "effort": self.reasoning_effort
+                    }
+                }
             }
             
             if or_tools:
@@ -276,6 +294,11 @@ class ChatOpenRouter(BaseChatLLM):
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
                 "stream": True,
+                "extra_body": {
+                    "reasoning":{
+                            "effort": self.reasoning_effort
+                        }
+                }
             }
             
             if or_tools:
@@ -307,6 +330,11 @@ class ChatOpenRouter(BaseChatLLM):
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
                 "stream": True,
+                "extra_body": {
+                    "reasoning":{
+                            "effort": self.reasoning_effort
+                        }
+                }
             }
             
             if or_tools:

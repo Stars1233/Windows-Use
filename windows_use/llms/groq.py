@@ -13,7 +13,6 @@ from httpx import Client
 import json
 import os
 
-@dataclass
 class ChatGroq(BaseChatLLM):
     def __init__(
         self,
@@ -102,13 +101,15 @@ class ChatGroq(BaseChatLLM):
                 content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
                 serialized.append(ChatCompletionUserMessageParam(role="user", content=content))
             elif isinstance(message, AIMessage):
-                content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
-                serialized.append(ChatCompletionAssistantMessageParam(role="assistant", content=content))
+                serialized_msg = {"role": "assistant", "content": message.content}
+                if message.thinking:
+                    serialized_msg["reasoning_content"] = message.thinking
+                serialized.append(serialized_msg)
             elif isinstance(message, ToolMessage):
                 # Assistant Tool Call
-                serialized.append(ChatCompletionAssistantMessageParam(
-                    role="assistant",
-                    tool_calls=[{
+                serialized_msg = {
+                    "role": "assistant",
+                    "tool_calls": [{
                         "id": message.id,
                         "type": "function",
                         "function": {
@@ -116,7 +117,10 @@ class ChatGroq(BaseChatLLM):
                             "arguments": json.dumps(message.params)
                         }
                     }]
-                ))
+                }
+                if message.thinking:
+                    serialized_msg["reasoning_content"] = message.thinking
+                serialized.append(serialized_msg)
                 # Tool Result
                 if message.content:
                     serialized.append({
@@ -182,10 +186,11 @@ class ChatGroq(BaseChatLLM):
                 id=tool_call.id,
                 name=tool_call.function.name,
                 params=json.loads(tool_call.function.arguments),
-                content=None
+                content=None,
+                thinking=thinking
             )
         else:
-            content = AIMessage(content=message.content)
+            content = AIMessage(content=message.content, thinking=thinking)
         
         return content, thinking
     

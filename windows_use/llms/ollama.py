@@ -9,7 +9,6 @@ from pydantic import BaseModel
 import json
 import os
 
-@dataclass
 class ChatOllama(BaseChatLLM):
     def __init__(self, host: str | None = None, model: str | None = None, think: bool = False, temperature: float = 0.7, timeout: int | None = None):
         self.host = host or "http://localhost:11434"  # Default to local Ollama
@@ -84,11 +83,18 @@ class ChatOllama(BaseChatLLM):
             elif isinstance(message, HumanMessage):
                 serialized.append(Message(role="user", content=message.content))
             elif isinstance(message, AIMessage):
-                serialized.append(Message(role="assistant", content=message.content))
+                content = message.content
+                if message.thinking:
+                    content = f"<thought>\n{message.thinking}\n</thought>\n{content}"
+                serialized.append(Message(role="assistant", content=content))
             elif isinstance(message, ToolMessage):
                 # Assistant Tool Call
+                content = None
+                if message.thinking:
+                    content = f"<thought>\n{message.thinking}\n</thought>"
                 serialized.append(Message(
                     role="assistant",
+                    content=content,
                     tool_calls=[{
                         "function": {
                             "name": message.name,
@@ -157,10 +163,11 @@ class ChatOllama(BaseChatLLM):
                 id="tool-call-id",
                 name=tool_call.function.name,
                 params=tool_call.function.arguments,
-                content=None
+                content=None,
+                thinking=thinking
             )
         else:
-            content = AIMessage(content=completion.message.content)
+            content = AIMessage(content=completion.message.content, thinking=thinking)
         
         return content, thinking
     

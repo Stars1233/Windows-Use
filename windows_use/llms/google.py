@@ -14,27 +14,50 @@ import json
 import os
 
 
+class EventLoopManager:
+    """Manages event loop lifecycle to avoid 'Event loop is closed' errors"""
+    _loop = None
+    _thread_id = None
+
+    @classmethod
+    def get_loop(cls):
+        """Get or create an event loop for the current thread"""
+        import threading
+        current_thread = threading.current_thread().ident
+        
+        # If we're on a different thread, we need a new loop
+        if cls._thread_id != current_thread:
+            cls._thread_id = current_thread
+            try:
+                cls._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                cls._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(cls._loop)
+        
+        # If no loop exists for this thread, create one
+        if cls._loop is None or cls._loop.is_closed():
+            cls._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(cls._loop)
+        
+        return cls._loop
+
+
 def run_async(coro):
     """
-    Run an async coroutine in both Jupyter notebooks and normal Python scripts.
-    Returns the actual result, not a Task.
+    Run an async coroutine safely without closing the event loop.
+    This prevents 'Event loop is closed' errors on subsequent calls.
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        # Running inside Jupyter — patch and run safely
+    loop = EventLoopManager.get_loop()
+    
+    if loop.is_running():
+        # We're already in an async context (e.g., Jupyter)
         import nest_asyncio
         nest_asyncio.apply()
-        return asyncio.get_event_loop().run_until_complete(coro)
-    else:
-        # Running in normal Python script
-        return asyncio.run(coro)
+    
+    # Run the coroutine without closing the loop
+    return loop.run_until_complete(coro)
 
 
-@dataclass
 class ChatGoogle(BaseChatLLM):
     def __init__(
         self,
@@ -73,7 +96,7 @@ class ChatGoogle(BaseChatLLM):
         return self.model
 
     def _create_client(self) -> Client:
-        """Create a fresh Google GenAI client"""
+        """Create a Google GenAI client"""
         kwargs = {"api_key": self.api_key}
         
         if self.vertexai is not None:
@@ -116,12 +139,20 @@ class ChatGoogle(BaseChatLLM):
             elif isinstance(message, HumanMessage):
                 serialized.append(Content(role="user", parts=[Part.from_text(text=message.content)]))
             elif isinstance(message, AIMessage):
-                serialized.append(Content(role="model", parts=[Part.from_text(text=message.content)]))
+                parts = []
+                if message.thinking:
+                    parts.append(Part(thought=message.thinking))
+                parts.append(Part.from_text(text=message.content))
+                serialized.append(Content(role="model", parts=parts))
             elif isinstance(message, ToolMessage):
                 # Model's function call
+                parts = []
+                if message.thinking:
+                    parts.append(Part(thought=message.thinking))
+                parts.append(Part.from_function_call(name=message.name, args=message.params))
                 serialized.append(Content(
                     role="model",
-                    parts=[Part.from_function_call(name=message.name, args=message.params)]
+                    parts=parts
                 ))
                 # User's function response
                 if message.content:
@@ -167,6 +198,11 @@ class ChatGoogle(BaseChatLLM):
             "temperature": self.temperature,
             "response_modalities": [Modality.TEXT],
         }
+
+        if self.thinking_budget > 0:
+            config["thinking_config"] = {
+                "include_thoughts": True,
+            }
         
         if system_instruction:
             config["system_instruction"] = system_instruction
@@ -228,17 +264,18 @@ class ChatGoogle(BaseChatLLM):
             except Exception as e:
                 raise ValueError(f"Failed to parse structured output: {e}")
         elif getattr(completion, 'function_calls', None):
+            text, thinking = self._extract_text_and_thinking(completion)
             function_call = completion.function_calls[0]
             content = ToolMessage(
                 id="tool-call-id",
                 name=function_call.name,
                 params=function_call.args,
-                content=None
+                content=None,
+                thinking=thinking
             )
-            thinking = None
         else:
             text, thinking = self._extract_text_and_thinking(completion)
-            content = AIMessage(content=text)
+            content = AIMessage(content=text, thinking=thinking)
         
         return content, thinking
 
@@ -248,10 +285,7 @@ class ChatGoogle(BaseChatLLM):
             system_instruction, contents = self.serialize_messages(messages)
             config = self._prepare_config(system_instruction, tools, structured_output, json_mode)
             
-            # Create fresh client to avoid event loop issues
-            client = self._create_client()
-            
-            completion = run_async(client.aio.models.generate_content(
+            completion = run_async(self.async_client.aio.models.generate_content(
                 model=self.model,
                 config=config,
                 contents=contents
@@ -346,9 +380,7 @@ class ChatGoogle(BaseChatLLM):
     def get_model_specification(self) -> ModelMetadata:
         """Retrieve model metadata from Google GenAI"""
         try:
-            # Create fresh client to avoid event loop issues
-            client = self._create_client()
-            response = run_async(client.aio.models.get(model=self.model))
+            response = run_async(self.async_client.aio.models.get(model=self.model))
             
             return ModelMetadata(
                 name=self.model,
@@ -359,6 +391,7 @@ class ChatGoogle(BaseChatLLM):
             # Fallback to default context windows for known models
             context_windows = {
                 "gemini-2.0-flash-exp": 1000000,
+                "gemini-2.5-flash-lite": 1000000,
                 "gemini-1.5-pro": 2000000,
                 "gemini-1.5-flash": 1000000,
                 "gemini-1.0-pro": 32760,
