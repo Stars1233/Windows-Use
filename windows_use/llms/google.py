@@ -3,7 +3,7 @@ from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMes
 from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
 from google.genai.client import Client, DebugConfig
 from google.auth.credentials import Credentials
-from typing import Iterator, AsyncIterator
+from typing import Iterator, AsyncIterator, Literal
 from windows_use.llms.base import BaseChatLLM
 from dataclasses import dataclass
 from windows_use.tool.service import Tool
@@ -70,7 +70,11 @@ class ChatGoogle(BaseChatLLM):
         credentials: Credentials | None = None,
         http_options: types.HttpOptions | types.HttpOptionsDict | None = None,
         debug_config: DebugConfig | None = None,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        max_tokens: int = 8192,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "medium"
     ):
         self.model = model
         if not api_key and not os.getenv("GOOGLE_API_KEY"):
@@ -83,7 +87,31 @@ class ChatGoogle(BaseChatLLM):
         self.location = location
         self.http_options = http_options
         self.debug_config = debug_config
-        self.thinking_budget = thinking_budget
+        self.reasoning_effort = reasoning_effort
+        self.max_tokens = max_tokens
+        self.top_p = top_p
+        self.top_k = top_k
+        
+        # Calculate thinking budget based on reasoning effort if not explicitly set
+        if thinking_budget == -1:
+            if reasoning_effort == "none":
+                self.thinking_budget = -1
+            else:
+                effort_map = {
+                    "minimal": 0.10,
+                    "low": 0.20,
+                    "medium": 0.50,
+                    "high": 0.80,
+                    "xhigh": 0.95
+                }
+                percentage = effort_map.get(reasoning_effort, 0.50)
+                # Gemini thinking budget must be less than max_tokens
+                self.thinking_budget = int(self.max_tokens * percentage)
+                # Ensure it's at least some reasonable amount if enabled
+                self.thinking_budget = max(1024, min(self.thinking_budget, self.max_tokens - 1024))
+        else:
+            self.thinking_budget = thinking_budget
+            
         self._client = None
         self._async_client = None
 
@@ -199,9 +227,17 @@ class ChatGoogle(BaseChatLLM):
             "response_modalities": [Modality.TEXT],
         }
 
+        if self.max_tokens:
+            config["max_output_tokens"] = self.max_tokens
+        if self.top_p is not None:
+            config["top_p"] = self.top_p
+        if self.top_k is not None:
+            config["top_k"] = self.top_k
+
         if self.thinking_budget > 0:
             config["thinking_config"] = {
                 "include_thoughts": True,
+                "thinking_budget": self.thinking_budget
             }
         
         if system_instruction:

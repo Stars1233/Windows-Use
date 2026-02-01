@@ -24,6 +24,10 @@ class ChatAzureOpenAI(BaseChatLLM):
         temperature: float = 0.7,
         max_retries: int = 3,
         reasoning_effort: Literal["low", "medium", "high"] = "medium",
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
         timeout: float | None = None,
         default_headers: dict[str, str] | None = None,
         default_query: dict[str, object] | None = None,
@@ -40,6 +44,10 @@ class ChatAzureOpenAI(BaseChatLLM):
         self.temperature = temperature
         self.max_retries = max_retries
         self.reasoning_effort = reasoning_effort
+        self.max_tokens = max_tokens
+        self.top_p = top_p
+        self.frequency_penalty = frequency_penalty
+        self.presence_penalty = presence_penalty
         self.timeout = timeout
         self.default_headers = default_headers
         self.default_query = default_query
@@ -215,6 +223,15 @@ class ChatAzureOpenAI(BaseChatLLM):
                 kwargs["reasoning_effort"] = self.reasoning_effort
             else:
                 kwargs["temperature"] = self.temperature
+                if self.top_p is not None:
+                    kwargs["top_p"] = self.top_p
+                if self.frequency_penalty is not None:
+                    kwargs["frequency_penalty"] = self.frequency_penalty
+                if self.presence_penalty is not None:
+                    kwargs["presence_penalty"] = self.presence_penalty
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
             
             if azure_tools:
                 kwargs["tools"] = azure_tools
@@ -252,6 +269,15 @@ class ChatAzureOpenAI(BaseChatLLM):
                 kwargs["reasoning_effort"] = self.reasoning_effort
             else:
                 kwargs["temperature"] = self.temperature
+                if self.top_p is not None:
+                    kwargs["top_p"] = self.top_p
+                if self.frequency_penalty is not None:
+                    kwargs["frequency_penalty"] = self.frequency_penalty
+                if self.presence_penalty is not None:
+                    kwargs["presence_penalty"] = self.presence_penalty
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
             
             if azure_tools:
                 kwargs["tools"] = azure_tools
@@ -290,6 +316,15 @@ class ChatAzureOpenAI(BaseChatLLM):
                 kwargs["reasoning_effort"] = self.reasoning_effort
             else:
                 kwargs["temperature"] = self.temperature
+                if self.top_p is not None:
+                    kwargs["top_p"] = self.top_p
+                if self.frequency_penalty is not None:
+                    kwargs["frequency_penalty"] = self.frequency_penalty
+                if self.presence_penalty is not None:
+                    kwargs["presence_penalty"] = self.presence_penalty
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
             
             if azure_tools:
                 kwargs["tools"] = azure_tools
@@ -322,6 +357,15 @@ class ChatAzureOpenAI(BaseChatLLM):
                 kwargs["reasoning_effort"] = self.reasoning_effort
             else:
                 kwargs["temperature"] = self.temperature
+                if self.top_p is not None:
+                    kwargs["top_p"] = self.top_p
+                if self.frequency_penalty is not None:
+                    kwargs["frequency_penalty"] = self.frequency_penalty
+                if self.presence_penalty is not None:
+                    kwargs["presence_penalty"] = self.presence_penalty
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
             
             if azure_tools:
                 kwargs["tools"] = azure_tools

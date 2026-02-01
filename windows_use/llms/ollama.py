@@ -1,7 +1,7 @@
 from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolMessage
 from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
 from ollama import Client, AsyncClient, Image, Message
-from typing import Iterator, AsyncIterator
+from typing import Iterator, AsyncIterator, Literal
 from windows_use.llms.base import BaseChatLLM
 from windows_use.tool.service import Tool
 from dataclasses import dataclass
@@ -10,12 +10,36 @@ import json
 import os
 
 class ChatOllama(BaseChatLLM):
-    def __init__(self, host: str | None = None, model: str | None = None, think: bool = False, temperature: float = 0.7, timeout: int | None = None):
+    def __init__(
+        self,
+        host: str | None = None,
+        model: str | None = None,
+        think: bool = False,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        timeout: int | None = None,
+        reasoning_effort: Literal["none", "low", "medium", "high"] = "medium"
+    ):
         self.host = host or "http://localhost:11434"  # Default to local Ollama
         self.model = model
         self.think = think
         self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.top_p = top_p
+        self.top_k = top_k
+        self.frequency_penalty = frequency_penalty
+        self.presence_penalty = presence_penalty
         self.timeout = timeout
+        self.reasoning_effort = reasoning_effort
+        # If effort is 'none', disable thinking. Otherwise respect the think flag or set to True if effort is set.
+        if self.reasoning_effort == "none":
+            self.think = False
+        elif self.reasoning_effort != "medium":
+            self.think = True
     
     @property
     def provider(self) -> str:
@@ -171,6 +195,23 @@ class ChatOllama(BaseChatLLM):
         
         return content, thinking
     
+    def _prepare_options(self) -> dict:
+        """Prepare Ollama options from class attributes"""
+        options = {}
+        if self.temperature is not None:
+            options["temperature"] = self.temperature
+        if self.max_tokens is not None:
+            options["num_predict"] = self.max_tokens
+        if self.top_p is not None:
+            options["top_p"] = self.top_p
+        if self.top_k is not None:
+            options["top_k"] = self.top_k
+        if self.frequency_penalty is not None:
+            options["repeat_penalty"] = self.frequency_penalty
+        if self.presence_penalty is not None:
+            options["presence_penalty"] = self.presence_penalty
+        return options
+
     def invoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
         """Synchronous invocation of Ollama chat completion"""
         try:
@@ -181,6 +222,8 @@ class ChatOllama(BaseChatLLM):
                 "stream": False,
                 "messages": self.serialize_messages(messages),
             }
+            if self.think:
+                kwargs["think"] = True
             
             if ollama_tools:
                 kwargs["tools"] = ollama_tools
@@ -190,8 +233,9 @@ class ChatOllama(BaseChatLLM):
             elif json_mode:
                 kwargs["format"] = "json"
             
-            if self.temperature is not None:
-                kwargs["options"] = {"temperature": self.temperature}
+            options = self._prepare_options()
+            if options:
+                kwargs["options"] = options
             
             completion = self.client.chat(**kwargs)
             
@@ -224,8 +268,9 @@ class ChatOllama(BaseChatLLM):
             elif json_mode:
                 kwargs["format"] = "json"
             
-            if self.temperature is not None:
-                kwargs["options"] = {"temperature": self.temperature}
+            options = self._prepare_options()
+            if options:
+                kwargs["options"] = options
             
             completion = await self.async_client.chat(**kwargs)
             
@@ -249,6 +294,8 @@ class ChatOllama(BaseChatLLM):
                 "stream": True,
                 "messages": self.serialize_messages(messages),
             }
+            if self.think:
+                kwargs["think"] = True
             
             if ollama_tools:
                 kwargs["tools"] = ollama_tools
@@ -258,8 +305,9 @@ class ChatOllama(BaseChatLLM):
             elif json_mode:
                 kwargs["format"] = "json"
             
-            if self.temperature is not None:
-                kwargs["options"] = {"temperature": self.temperature}
+            options = self._prepare_options()
+            if options:
+                kwargs["options"] = options
             
             stream = self.client.chat(**kwargs)
             
@@ -291,8 +339,9 @@ class ChatOllama(BaseChatLLM):
             elif json_mode:
                 kwargs["format"] = "json"
             
-            if self.temperature is not None:
-                kwargs["options"] = {"temperature": self.temperature}
+            options = self._prepare_options()
+            if options:
+                kwargs["options"] = options
             
             stream = await self.async_client.chat(**kwargs)
             

@@ -3,7 +3,7 @@ from groq.types.chat.completion_create_params import ResponseFormatResponseForma
 from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolMessage
 from groq.types.chat.chat_completion_content_part_image_param import ImageURL
 from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
-from typing import Iterator, AsyncIterator
+from typing import Iterator, AsyncIterator, Literal
 from windows_use.llms.base import BaseChatLLM
 from dataclasses import dataclass
 from pydantic import BaseModel
@@ -22,6 +22,9 @@ class ChatGroq(BaseChatLLM):
         temperature: float = 0.7,
         max_retries: int = 3,
         timeout: int | None = None,
+        reasoning_effort: Literal["none", "default", "low", "medium", "high", "minimal", "xhigh"] = "default",
+        max_tokens: int | None = None,
+        top_p: float | None = None,
         default_headers: dict[str, str] | None = None,
         default_query: dict[str, object] | None = None,
         http_client: Client | None = None,
@@ -35,6 +38,9 @@ class ChatGroq(BaseChatLLM):
         self.max_retries = max_retries
         self.base_url = base_url
         self.timeout = timeout
+        self.reasoning_effort = reasoning_effort
+        self.max_tokens = max_tokens
+        self.top_p = top_p
         self.default_headers = default_headers
         self.default_query = default_query
         self.http_client = http_client
@@ -205,6 +211,16 @@ class ChatGroq(BaseChatLLM):
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
             }
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+            
+            if self.reasoning_effort not in ["default", "none"] or "deepseek" in self.model.lower() or "qwen" in self.model.lower():
+                kwargs["extra_body"] = {
+                    "reasoning_effort": self.reasoning_effort
+                }
             
             if groq_tools:
                 kwargs["tools"] = groq_tools
@@ -239,6 +255,16 @@ class ChatGroq(BaseChatLLM):
                 "messages": self.serialize_messages(messages),
                 "temperature": self.temperature,
             }
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+            
+            if self.reasoning_effort not in ["default", "none"] or "deepseek" in self.model.lower() or "qwen" in self.model.lower():
+                kwargs["extra_body"] = {
+                    "reasoning_effort": self.reasoning_effort
+                }
             
             if groq_tools:
                 kwargs["tools"] = groq_tools
@@ -274,6 +300,16 @@ class ChatGroq(BaseChatLLM):
                 "temperature": self.temperature,
                 "stream": True,
             }
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+            
+            if self.reasoning_effort not in ["default", "none"] or "deepseek" in self.model.lower() or "qwen" in self.model.lower():
+                kwargs["extra_body"] = {
+                    "reasoning_effort": self.reasoning_effort
+                }
             
             if groq_tools:
                 kwargs["tools"] = groq_tools
@@ -303,6 +339,16 @@ class ChatGroq(BaseChatLLM):
                 "temperature": self.temperature,
                 "stream": True,
             }
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+            
+            if self.reasoning_effort not in ["default", "none"] or "deepseek" in self.model.lower() or "qwen" in self.model.lower():
+                kwargs["extra_body"] = {
+                    "reasoning_effort": self.reasoning_effort
+                }
             
             if groq_tools:
                 kwargs["tools"] = groq_tools

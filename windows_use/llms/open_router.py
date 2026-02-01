@@ -32,6 +32,8 @@ class ChatOpenRouter(BaseChatLLM):
         temperature: float = 0.7,
         max_retries: int = 3,
         reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "medium",
+        max_tokens: int | None = None,
+        top_p: float | None = None,
         timeout: int | None = None,
         default_headers: dict[str, str] | None = None,
         default_query: dict[str, object] | None = None,
@@ -45,6 +47,8 @@ class ChatOpenRouter(BaseChatLLM):
         self.temperature = temperature
         self.max_retries = max_retries
         self.reasoning_effort = reasoning_effort
+        self.max_tokens = max_tokens
+        self.top_p = top_p
         self.base_url = base_url or 'https://openrouter.ai/api/v1'
         self.timeout = timeout
         self.default_headers = default_headers
@@ -221,6 +225,11 @@ class ChatOpenRouter(BaseChatLLM):
                         }
                 }
             }
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
             
             if or_tools:
                 kwargs["tools"] = or_tools
@@ -260,6 +269,11 @@ class ChatOpenRouter(BaseChatLLM):
                     }
                 }
             }
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
             
             if or_tools:
                 kwargs["tools"] = or_tools
@@ -301,6 +315,11 @@ class ChatOpenRouter(BaseChatLLM):
                 }
             }
             
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+            
             if or_tools:
                 kwargs["tools"] = or_tools
             if response_format:
@@ -336,6 +355,11 @@ class ChatOpenRouter(BaseChatLLM):
                         }
                 }
             }
+            
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
             
             if or_tools:
                 kwargs["tools"] = or_tools

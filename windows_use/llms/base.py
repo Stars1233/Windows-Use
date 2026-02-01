@@ -1,4 +1,4 @@
-from typing import Protocol,runtime_checkable,overload
+from typing import Protocol, runtime_checkable, overload, Iterator, AsyncIterator
 from windows_use.llms.views import ChatLLMResponse, ModelMetadata
 from windows_use.messages import BaseMessage
 from pydantic import BaseModel
@@ -16,19 +16,19 @@ class BaseChatLLM(Protocol):
         ...
 
     @overload
-    def invoke(self, messages: list[BaseMessage], tools:list[Tool]=[], structured_output:BaseModel|None=None, json_mode:bool=False) -> ChatLLMResponse:
+    def invoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
         ...
 
     @overload
-    async def ainvoke(self, messages: list[BaseMessage], tools:list[Tool]=[], structured_output:BaseModel|None=None, json_mode:bool=False) -> ChatLLMResponse:
+    async def ainvoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
         ...
 
     @overload
-    def stream(self, messages: list[BaseMessage], tools:list[Tool]=[], structured_output:BaseModel|None=None, json_mode:bool=False) -> ChatLLMResponse:
+    def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
         ...
 
     @overload
-    async def astream(self, messages: list[BaseMessage], tools:list[Tool]=[], structured_output:BaseModel|None=None, json_mode:bool=False) -> ChatLLMResponse:
+    async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
         ...
 
     @overload

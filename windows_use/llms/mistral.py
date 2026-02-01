@@ -1,7 +1,7 @@
 from mistralai import HttpClient, AsyncHttpClient, RetryConfig, OptionalNullable, UserMessage, AssistantMessage, SystemMessage as MainMessage, TextChunk, ThinkChunk, ImageURL, ImageURLChunk, ResponseFormat, JSONSchema, ToolMessage as MistralToolMessage
 from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolMessage
 from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
-from typing import Union, Dict, Type, Iterator, AsyncIterator
+from typing import Union, Dict, Type, Iterator, AsyncIterator, Literal
 from windows_use.llms.base import BaseChatLLM
 from windows_use.tool.service import Tool
 from dataclasses import dataclass
@@ -25,7 +25,9 @@ class ChatMistral(BaseChatLLM):
         async_client: Type[AsyncHttpClient] = None,
         retry_config: OptionalNullable[RetryConfig] = None,
         timeout_ms: Union[int, None] = None,
-        debug_logger: Union[logging.Logger, None] = None
+        debug_logger: Union[logging.Logger, None] = None,
+        reasoning_effort: Literal["none", "low", "medium", "high"] = "medium",
+        top_p: float | None = None
     ):
         self.model = model
         if not api_key and not os.getenv("MISTRAL_API_KEY"):
@@ -41,6 +43,8 @@ class ChatMistral(BaseChatLLM):
         self.retry_config = retry_config
         self.timeout_ms = timeout_ms
         self.debug_logger = debug_logger
+        self.reasoning_effort = reasoning_effort
+        self.top_p = top_p
 
     @property
     def client(self) -> Mistral:
@@ -227,6 +231,8 @@ class ChatMistral(BaseChatLLM):
             
             if self.max_tokens:
                 kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
             if mistral_tools:
                 kwargs["tools"] = mistral_tools
             if response_format:
@@ -262,6 +268,8 @@ class ChatMistral(BaseChatLLM):
             
             if self.max_tokens:
                 kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
             if mistral_tools:
                 kwargs["tools"] = mistral_tools
             if response_format:
@@ -297,6 +305,8 @@ class ChatMistral(BaseChatLLM):
             
             if self.max_tokens:
                 kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
             if mistral_tools:
                 kwargs["tools"] = mistral_tools
             if response_format:
@@ -333,6 +343,8 @@ class ChatMistral(BaseChatLLM):
             
             if self.max_tokens:
                 kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
             if mistral_tools:
                 kwargs["tools"] = mistral_tools
             if response_format:

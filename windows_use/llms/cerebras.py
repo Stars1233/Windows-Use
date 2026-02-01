@@ -22,6 +22,8 @@ class ChatCerebras(BaseChatLLM):
         model: str,
         api_key: str | None = None,
         temperature: float = 0.7,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
         max_retries: int = 3,
@@ -37,6 +39,8 @@ class ChatCerebras(BaseChatLLM):
             raise ValueError("CEREBRAS_API_KEY is not set")
         self.api_key = api_key or os.getenv("CEREBRAS_API_KEY")
         self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.top_p = top_p
         self.base_url = base_url
         self.timeout = timeout
         self.max_retries = max_retries
@@ -204,6 +208,11 @@ class ChatCerebras(BaseChatLLM):
                 }
             }
             
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+
             if cerebras_tools:
                 kwargs["tools"] = cerebras_tools
             if response_format:
@@ -241,6 +250,11 @@ class ChatCerebras(BaseChatLLM):
                 }
             }
             
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+
             if cerebras_tools:
                 kwargs["tools"] = cerebras_tools
             if response_format:
@@ -278,7 +292,12 @@ class ChatCerebras(BaseChatLLM):
                     "reasoning_effort": self.reasoning_effort
                 }
             }
-            
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+
             if cerebras_tools:
                 kwargs["tools"] = cerebras_tools
             if response_format:
@@ -310,7 +329,12 @@ class ChatCerebras(BaseChatLLM):
                     "reasoning_effort": self.reasoning_effort
                 }
             }
-            
+
+            if self.max_tokens is not None:
+                kwargs["max_tokens"] = self.max_tokens
+            if self.top_p is not None:
+                kwargs["top_p"] = self.top_p
+
             if cerebras_tools:
                 kwargs["tools"] = cerebras_tools
             if response_format:

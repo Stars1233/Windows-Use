@@ -13,7 +13,7 @@ import json
 import os
 
 class ChatAnthropic(BaseChatLLM):
-    def __init__(self, model: str, api_key: str | None = None, thinking_budget: int = -1, reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "medium", temperature: float = 0.7, max_tokens: int = 8192, auth_token: str | None = None, base_url: str | None = None, timeout: float | None = None, max_retries: int = 3, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
+    def __init__(self, model: str, api_key: str | None = None, thinking_budget: int = -1, reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "medium", temperature: float = 0.7, max_tokens: int = 8192, top_p: float | None = None, top_k: int | None = None, auth_token: str | None = None, base_url: str | None = None, timeout: float | None = None, max_retries: int = 3, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
         self.model = model
         if not api_key and not os.getenv("ANTHROPIC_API_KEY"):
             raise ValueError("ANTHROPIC_API_KEY is not set")
@@ -23,6 +23,8 @@ class ChatAnthropic(BaseChatLLM):
         self.temperature = temperature
         self.base_url = base_url
         self.reasoning_effort = reasoning_effort
+        self.top_p = top_p
+        self.top_k = top_k
         
         # Calculate thinking budget based on reasoning effort if not explicitly set
         if thinking_budget == -1:
@@ -227,6 +229,11 @@ class ChatAnthropic(BaseChatLLM):
                     "budget_tokens": self.thinking_budget
                 }
                 kwargs["temperature"] = 1.0
+            else:
+                if self.top_p is not None:
+                    kwargs["top_p"] = self.top_p
+                if self.top_k is not None:
+                    kwargs["top_k"] = self.top_k
             
             completion = self.client.messages.create(**kwargs)
 
@@ -281,6 +288,11 @@ class ChatAnthropic(BaseChatLLM):
                     "budget_tokens": self.thinking_budget
                 }
                 kwargs["temperature"] = 1.0
+            else:
+                if self.top_p is not None:
+                    kwargs["top_p"] = self.top_p
+                if self.top_k is not None:
+                    kwargs["top_k"] = self.top_k
 
             completion = await self.async_client.messages.create(**kwargs)
 
@@ -333,6 +345,11 @@ class ChatAnthropic(BaseChatLLM):
                     "budget_tokens": self.thinking_budget
                 }
                 kwargs["temperature"] = 1.0
+            else:
+                if self.top_p is not None:
+                    kwargs["top_p"] = self.top_p
+                if self.top_k is not None:
+                    kwargs["top_k"] = self.top_k
 
             with self.client.messages.stream(**kwargs) as stream:
                 for event in stream:
@@ -367,6 +384,11 @@ class ChatAnthropic(BaseChatLLM):
                     "budget_tokens": self.thinking_budget
                 }
                 kwargs["temperature"] = 1.0
+            else:
+                if self.top_p is not None:
+                    kwargs["top_p"] = self.top_p
+                if self.top_k is not None:
+                    kwargs["top_k"] = self.top_k
                 
             async with self.async_client.messages.stream(**kwargs) as stream:
                 async for event in stream:
