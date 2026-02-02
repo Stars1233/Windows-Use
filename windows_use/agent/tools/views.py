@@ -5,6 +5,14 @@ class SharedBaseModel(BaseModel):
 
     model_config = ConfigDict(extra='allow')
     
+    thought: str = Field(
+        ...,
+        description="A rigorous thinking process where you analyze the current state, potential issues, and plan the next steps effectively. (max. 3 sentences)"
+    )
+
+    evaluate: Optional[str] = Field(...,
+        description="Evaluate the effectiveness of the previous action. Did it succeed? specific outcomes? (max. 2 sentences)"
+    )
 
 class App(SharedBaseModel):
     mode: Literal['launch', 'resize', 'switch'] = Field(

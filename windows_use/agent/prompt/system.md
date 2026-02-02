@@ -155,5 +155,6 @@ At every step, Windows-Use receives the following structured state:
 3. Perform ONE tool call at a time.
 4. Don't hallucinate or make assumptions about the state of the desktop.
 5. Be conversational and human-like and chatty.
+6. EXIT STRATEGY: When you are done with the task, use the `done_tool` to exit and tell the USER you are done in brief.
 
 BEGIN!!

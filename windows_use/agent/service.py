@@ -29,7 +29,7 @@ logger.addHandler(handler)
 class Agent(BaseAgent):
     def __init__(self,mode:Literal["flash","normal"]="normal",instructions:list[str]=[],browser:Browser=Browser.EDGE, use_annotation:bool=False, llm: BaseChatLLM=None,max_consecutive_failures:int=3,max_steps:int=25,use_vision:bool=False,auto_minimize:bool=False,experimental:bool=False):
         '''
-        Initialize the Windows Use Agent.
+        Initialize the Agent.
 
         The Agent is the core component that orchestrates interactions with the Windows GUI.
         It uses an LLM to process instructions, analyze the desktop state (via UI automation 
@@ -80,7 +80,7 @@ class Agent(BaseAgent):
 
     @property
     def tools(self):
-        return self.registry.get_tools(exclude_tools=["done_tool"])
+        return self.registry.get_tools()
 
     @property
     def state_message(self)->HumanMessage|ImageMessage:
@@ -106,10 +106,7 @@ class Agent(BaseAgent):
         for attempt in range(max_attempts):
             try:
                 llm_response = self.llm.invoke(messages=self.state.messages, tools=self.tools)
-                if thinking := llm_response.thinking:
-                    logger.info(f"[Agent] 🧠 Thinking: {thinking}")
-                if isinstance(llm_response.content, ToolMessage | AIMessage):
-                    return llm_response.content
+                return llm_response.content
             except Exception as e:
                 last_error = e
                 if attempt < max_attempts - 1:  # Don't sleep after the last attempt
@@ -131,17 +128,20 @@ class Agent(BaseAgent):
             raise RuntimeError("Failed to get response from LLM: Unknown error")
 
     def act(self,tool_name:str,tool_params:dict)->ToolResult:
+        if 'thought' in tool_params and tool_params['thought'] is not None:
+            logger.info(f"[Agent] 🧠 Thinking: {tool_params['thought']}")
         formatted_params=[
             f"{key}={value}" for key, value in tool_params.items()
+            if key not in ['thought', 'evaluate']
         ]
-        if not tool_name.startswith("done"):
+        if not tool_name.startswith("done_tool"):
             logger.info(f"[Agent] 🛠️ Tool Call: {tool_name}({', '.join(formatted_params)})")
         tool_result=self.registry.execute(tool_name=tool_name,tool_params=tool_params,desktop=self.desktop)
         if tool_result.is_success:
-            if not tool_name.startswith("done"):
+            if not tool_name.startswith("done_tool"):
                 logger.info(f"[Agent] 📃 Tool Result: {tool_result.content}")
         else:
-            if not tool_name.startswith("done"):
+            if not tool_name.startswith("done_tool"):
                 logger.error(f"[Agent] ❌ Tool Error: {tool_result.error}")
         return tool_result
 
@@ -165,6 +165,8 @@ class Agent(BaseAgent):
                 )
                 content=tool_result.content if tool_result.is_success else tool_result.error
                 message.content=content
+                if tool_name.startswith("done_tool"):
+                    return self.answer(content=content)
                 self.state.messages.append(message)
             if isinstance(message,AIMessage):
                 self.state.messages.append(message)
