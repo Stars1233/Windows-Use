@@ -206,15 +206,21 @@ class Desktop:
                 
                 # Smart wait using UIA Exists (avoids manual Python loops)
                 launched = False
-                if pid > 0:
-                    if uia.WindowControl(ProcessId=pid).Exists(maxSearchSeconds=10):
-                        launched = True
-                
-                if not launched:
-                    # Fallback: Regex search for the window title
-                    safe_name = re.escape(name)
-                    if uia.WindowControl(RegexName=f'(?i).*{safe_name}.*').Exists(maxSearchSeconds=10):
-                        launched = True
+                try:
+                    if pid > 0:
+                        if uia.WindowControl(ProcessId=pid).Exists(maxSearchSeconds=10):
+                            launched = True
+                    
+                    if not launched:
+                        # Fallback: Regex search for the window title
+                        safe_name = re.escape(name)
+                        if uia.WindowControl(RegexName=f'(?i).*{safe_name}.*').Exists(maxSearchSeconds=10):
+                            launched = True
+                except Exception as e:
+                    logger.warning(f"Error verifying app launch (likely transient COM error): {e}")
+                    # Assume launched if we got this far without launch_app failing, 
+                    # as the subprocess call succeeded.
+                    launched = True
 
                 if launched:
                     return f'{name.title()} launched.'
@@ -343,7 +349,7 @@ class Desktop:
             pg.sleep(0.5)
             pg.hotkey('ctrl','a')
             pg.press('backspace')
-        pg.typewrite(text,interval=0.02)
+        pg.typewrite(text,interval=0.01)
         if press_enter=='true':
             pg.press('enter')
 

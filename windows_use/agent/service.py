@@ -175,7 +175,10 @@ class Agent(BaseAgent):
 
     def invoke(self,query:str):
         self.state.task=query
-        content=self.loop()
+        with (self.desktop.auto_minimize() if self.auto_minimize else nullcontext()):
+            self.watchdog.set_focus_callback(self.desktop.tree.on_focus_change)
+            with self.watchdog:
+                content=self.loop()
         return AgentResult(
             content=content,
         )

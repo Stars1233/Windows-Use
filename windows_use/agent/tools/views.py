@@ -157,7 +157,7 @@ class MultiEdit(SharedBaseModel):
     )
 
 class Scroll(SharedBaseModel):
-    loc: list[int] | None = Field(
+    loc: Optional[list[int]] = Field(
         description="(x, y) pixel coordinates where scroll action occurs. If None, scrolls at current cursor position",
         default=None,
         examples=[[640, 360], [800, 400], None]
