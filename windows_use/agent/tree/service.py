@@ -114,11 +114,19 @@ class Tree:
                             dom_informative_nodes.extend(info_nodes)
                     except Exception as e:
                         retry_counts[handle] += 1
-                        logger.debug(f"Error in processing handle {handle}, retry attempt {retry_counts[handle]}\nError: {e}")
+                        try:
+                            # Try to get window name for better logging
+                            window_name = ControlFromHandle(handle).Name
+                        except:
+                            window_name = "Unknown"
+                        logger.warning(f"Error in processing window '{window_name}' (handle {handle}), retry attempt {retry_counts[handle]}/{THREAD_MAX_RETRIES}\nError: {e}")
                         if retry_counts[handle] < THREAD_MAX_RETRIES:
                             # Need to find is_browser again for retry
                             is_browser = next((ib for h, ib in task_inputs if h == handle), False)
-                            new_future = executor.submit(self.get_nodes, handle, is_browser)
+                            # Exponential backoff: 0.5s, 1s, 2s, 4s...
+                            wait_time = 0.5 * (2 ** (retry_counts[handle] - 1))
+                            logger.info(f"Retrying window {handle} in {wait_time}s...")
+                            new_future = executor.submit(self.get_nodes, handle, is_browser, wait_time)
                             future_to_handle[new_future] = handle
                         else:
                             logger.error(f"Task failed completely for handle {handle} after {THREAD_MAX_RETRIES} retries")
@@ -473,7 +481,9 @@ class Tree:
             case _:
                 return window_name
     
-    def get_nodes(self, handle: int, is_browser:bool=False) -> tuple[list[TreeElementNode],list[ScrollElementNode],list[TextElementNode]]:
+    def get_nodes(self, handle: int, is_browser:bool=False, wait_time:float=0) -> tuple[list[TreeElementNode],list[ScrollElementNode],list[TextElementNode]]:
+        if wait_time > 0:
+            sleep(wait_time)
         try:
             comtypes.CoInitialize()
             # Rehydrate Control from handle within the thread's COM context
