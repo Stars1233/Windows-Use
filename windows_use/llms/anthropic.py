@@ -1,422 +1,347 @@
-from anthropic.types import Message, MessageParam, ImageBlockParam, Base64ImageSourceParam, TextBlockParam, CacheControlEphemeralParam, ToolUseBlockParam, ToolResultBlockParam, ThinkingBlockParam
-from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolMessage
-from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
-from anthropic import Anthropic, AsyncAnthropic
-from typing import Iterator, AsyncIterator
-from windows_use.llms.base import BaseChatLLM
-from windows_use.tool.service import Tool
-from dataclasses import dataclass
-from pydantic import BaseModel
-from typing import Literal
-from httpx import Client
-import json
 import os
+import json
+import logging
+from typing import Iterator, AsyncIterator, List, Optional, Any, Union, overload
+from anthropic import Anthropic, AsyncAnthropic
+from pydantic import BaseModel
+from windows_use.llms.base import BaseChatLLM
+from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, Metadata
+from windows_use.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage, ImageMessage, ToolMessage
+from windows_use.tool import Tool
+
+logger = logging.getLogger(__name__)
 
 class ChatAnthropic(BaseChatLLM):
-    def __init__(self, model: str, api_key: str | None = None, thinking_budget: int = -1, reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = "medium", temperature: float = 0.7, max_tokens: int = 8192, top_p: float | None = None, top_k: int | None = None, auth_token: str | None = None, base_url: str | None = None, timeout: float | None = None, max_retries: int = 3, default_headers: dict[str, str] | None = None, default_query: dict[str, object] | None = None, http_client: Client | None = None, strict_response_validation: bool = False):
-        self.model = model
-        if not api_key and not os.getenv("ANTHROPIC_API_KEY"):
-            raise ValueError("ANTHROPIC_API_KEY is not set")
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-        self.auth_token = auth_token
-        self.max_tokens = max_tokens
-        self.temperature = temperature
-        self.base_url = base_url
-        self.reasoning_effort = reasoning_effort
-        self.top_p = top_p
-        self.top_k = top_k
-        
-        # Calculate thinking budget based on reasoning effort if not explicitly set
-        if thinking_budget == -1:
-            if reasoning_effort == "none":
-                self.thinking_budget = -1
-            else:
-                effort_map = {
-                    "minimal": 0.10,
-                    "low": 0.20,
-                    "medium": 0.50,
-                    "high": 0.80,
-                    "xhigh": 0.95
-                }
-                percentage = effort_map.get(reasoning_effort, 0.50)
-                # Anthropic thinking budget must be less than max_tokens
-                # We subtract a small buffer (e.g., 20% or at least some tokens) for the actual response content
-                # However, the user request says reasoning_effort allocates token portion.
-                # We'll follow the percentage but cap it to avoid exhausting all tokens.
-                self.thinking_budget = int(self.max_tokens * percentage)
-                # Ensure it's at least 1024 if enabled, but not more than max_tokens - 1024
-                self.thinking_budget = max(1024, min(self.thinking_budget, self.max_tokens - 1024))
-        else:
-            self.thinking_budget = thinking_budget
-            
-        self.timeout = timeout
-        self.max_retries = max_retries
-        self.default_headers = default_headers
-        self.default_query = default_query
-        self.http_client = http_client
-        self.strict_response_validation = strict_response_validation
-
-    @property
-    def client(self):
-        kwargs = {
-            "api_key": self.api_key,
-            "timeout": self.timeout,
-            "max_retries": self.max_retries,
-            "_strict_response_validation": self.strict_response_validation
-        }
-        if self.auth_token:
-            kwargs["auth_token"] = self.auth_token
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        if self.default_headers:
-            kwargs["default_headers"] = self.default_headers
-        if self.default_query:
-            kwargs["default_query"] = self.default_query
-        if self.http_client:
-            kwargs["http_client"] = self.http_client
-        
-        return Anthropic(**kwargs)
+    """
+    Anthropic LLM implementation following the BaseChatLLM protocol.
+    """
     
-    @property
-    def async_client(self):
-        kwargs = {
-            "api_key": self.api_key,
-            "timeout": self.timeout,
-            "max_retries": self.max_retries,
-            "_strict_response_validation": self.strict_response_validation
-        }
-        if self.auth_token:
-            kwargs["auth_token"] = self.auth_token
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        if self.default_headers:
-            kwargs["default_headers"] = self.default_headers
-        if self.default_query:
-            kwargs["default_query"] = self.default_query
-        if self.http_client:
-            kwargs["http_client"] = self.http_client
+    def __init__(
+        self,
+        model: str = "claude-3-5-sonnet-latest",
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: float = 600.0,
+        max_retries: int = 2,
+        temperature: Optional[float] = None,
+        **kwargs
+    ):
+        """
+        Initialize the Anthropic LLM.
+
+        Args:
+            model (str): The model name to use.
+            api_key (str, optional): Anthropic API key.
+            base_url (str, optional): Base URL for the API.
+            timeout (float): Request timeout in seconds.
+            max_retries (int): Maximum number of retries.
+            temperature (float, optional): Sampling temperature.
+            **kwargs: Additional arguments for messages.create.
+        """
+        self._model = model
+        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        self.base_url = base_url or os.environ.get("ANTHROPIC_BASE_URL")
+        self.temperature = temperature
         
-        return AsyncAnthropic(**kwargs)
+        self.client = Anthropic(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        self.aclient = AsyncAnthropic(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        self.kwargs = kwargs
 
     @property
-    def provider(self):
+    def model_name(self) -> str:
+        return self._model
+
+    @property
+    def provider(self) -> str:
         return "anthropic"
 
-    @property
-    def model_name(self):
-        return self.model
-    
-    def serialize_messages(self, messages: list[BaseMessage]):
-        system_instruction = None
-        serialized = []
-        for message in messages:
-            if isinstance(message, SystemMessage):
-                system_instruction = [TextBlockParam(
-                    type="text", text=message.content,
-                    cache_control=CacheControlEphemeralParam(type="ephemeral")
-                )]
-            elif isinstance(message, HumanMessage):
-                content = [TextBlockParam(type="text", text=message.content)]
-                serialized.append(MessageParam(role="user", content=content))
-            elif isinstance(message, AIMessage):
+    def _convert_messages(self, messages: List[BaseMessage]) -> tuple[Optional[str], List[dict]]:
+        """
+        Convert BaseMessage objects to Anthropic-compatible message dictionaries.
+        Returns (system_prompt, messages).
+        """
+        anthropic_messages = []
+        system_prompt = None
+        
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                system_prompt = msg.content
+            elif isinstance(msg, HumanMessage):
+                anthropic_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, ImageMessage):
                 content = []
-                if message.thinking:
-                    content.append(ThinkingBlockParam(type="thinking", thinking=message.thinking, signature=message.thinking_signature or "dummy-signature"))
-                content.append(TextBlockParam(type="text", text=message.content))
-                serialized.append(MessageParam(role="assistant", content=content))
-            elif isinstance(message, ToolMessage):
-                # 1. The Assistant's Tool Use Request
+                if msg.content:
+                    content.append({"type": "text", "text": msg.content})
+                
+                b64_imgs = msg.convert_images(format="base64")
+                for b64 in b64_imgs:
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": msg.mime_type,
+                            "data": b64
+                        }
+                    })
+                anthropic_messages.append({"role": "user", "content": content})
+            elif isinstance(msg, AIMessage):
                 content = []
-                if message.thinking:
-                    content.append(ThinkingBlockParam(type="thinking", thinking=message.thinking, signature=message.thinking_signature or "dummy-signature"))
-                content.append(ToolUseBlockParam(
-                    type="tool_use",
-                    id=message.id,
-                    name=message.name,
-                    input=message.params
-                ))
-                serialized.append(MessageParam(role="assistant", content=content))
+                if msg.thinking:
+                    content.append({"type": "thinking", "thinking": msg.thinking, "signature": msg.thinking_signature})
+                if msg.content:
+                    content.append({"type": "text", "text": msg.content})
+                anthropic_messages.append({"role": "assistant", "content": content if content else ""})
+            elif isinstance(msg, ToolMessage):
+                # Anthropic requires a tool_use block followed by a tool_result block
+                # However, our message history might be complex. 
+                # We need to make sure we find the corresponding tool_use in the assistant message.
                 
-                # 2. The User's Tool Result (if executed)
-                if message.content is not None:
-                    tool_result_block = ToolResultBlockParam(
-                        type="tool_result",
-                        tool_use_id=message.id,
-                        content=str(message.content)
-                    )
-                    serialized.append(MessageParam(role="user", content=[tool_result_block]))
-
-            elif isinstance(message, ImageMessage):
-                message.scale_images(scale=0.7)
-                images = message.convert_images("base64")
-                content = [TextBlockParam(type="text", text=message.content)]
-                
-                for image in images:
-                    # Remove data URL prefix if present
-                    if image.startswith('data:'):
-                        image = image.split(',', 1)[1]
+                # Check if the previous message was an assistant message with tool calls
+                if anthropic_messages and anthropic_messages[-1]["role"] == "assistant":
+                    # If it's already an assistant message, we check if it has tool_use
+                    last_content = anthropic_messages[-1]["content"]
+                    if isinstance(last_content, str):
+                        last_content = [{"type": "text", "text": last_content}]
                     
-                    content.append(ImageBlockParam(
-                        type="image",
-                        source=Base64ImageSourceParam(
-                            type="base64",
-                            data=image,
-                            media_type=message.mime_type
-                        )
-                    ))
+                    tool_use_block = {
+                        "type": "tool_use",
+                        "id": msg.id,
+                        "name": msg.name,
+                        "input": msg.params
+                    }
+                    if isinstance(last_content, list):
+                        last_content.append(tool_use_block)
+                    anthropic_messages[-1]["content"] = last_content
+                else:
+                    # If no assistant message, we inject one (though this shouldn't happen with correct history)
+                    anthropic_messages.append({
+                        "role": "assistant",
+                        "content": [{
+                            "type": "tool_use",
+                            "id": msg.id,
+                            "name": msg.name,
+                            "input": msg.params
+                        }]
+                    })
                 
-                serialized.append(MessageParam(role="user", content=content))
-            else:
-                raise ValueError(f"Unsupported message type: {type(message)}")
-        return system_instruction, serialized
-    
-    def _prepare_tools(self, tools: list[Tool]) -> list[dict] | None:
-        """Convert tools to Anthropic format"""
-        if not tools:
-            return None
+                # Now add the tool result
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": msg.id,
+                        "content": msg.content or ""
+                    }]
+                })
+                
+        return system_prompt, anthropic_messages
+
+    def _convert_tools(self, tools: List[Tool]) -> List[dict]:
+        """
+        Convert Tool objects to Anthropic-compatible tool definitions.
+        """
+        return [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.json_schema["parameters"]
+            }
+            for tool in tools
+        ]
+
+    def _process_response(self, response: Any) -> ChatLLMResponse:
+        """
+        Process Anthropic API response into ChatLLMResponse object.
+        """
+        content_blocks = response.content
+        usage_data = response.usage
         
-        return [{
-            "name": tool.json_schema["name"],
-            "description": tool.json_schema["description"],
-            "input_schema": tool.json_schema["parameters"]
-        } for tool in tools]
-    
-    def _parse_response(self, completion: Message) -> tuple[str, ToolMessage | None, str | None, str | None]:
-        """Parse Anthropic response into content, tool_message, thinking, and thinking_signature"""
-        content = ""
-        tool_message = None
+        usage = ChatLLMUsage(
+            prompt_tokens=usage_data.input_tokens,
+            completion_tokens=usage_data.output_tokens,
+            total_tokens=usage_data.input_tokens + usage_data.output_tokens
+        )
+        
+        text_content = ""
         thinking = None
-        thinking_signature = None
+        tool_message = None
         
-        for block in completion.content:
+        for block in content_blocks:
             if block.type == "text":
-                content += block.text
+                text_content += block.text
             elif block.type == "thinking":
                 thinking = block.thinking
-                thinking_signature = getattr(block, 'signature', None)
             elif block.type == "tool_use":
-                tool_message = ToolMessage(
-                    id=block.id,
-                    name=block.name,
-                    params=block.input,
-                    content=None,
-                    thinking=thinking,
-                    thinking_signature=thinking_signature
-                )
+                # Take the first tool use as per Agent logic
+                if not tool_message:
+                    tool_message = ToolMessage(
+                        id=block.id,
+                        name=block.name,
+                        params=block.input
+                    )
         
-        return content, tool_message, thinking, thinking_signature
-    
-    def invoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False):
-        try:
-            system_instruction, messages = self.serialize_messages(messages)
-            anthropic_tools = self._prepare_tools(tools)
+        final_content = tool_message if tool_message else AIMessage(content=text_content)
+        if thinking:
+            final_content.thinking = thinking
+        
+        return ChatLLMResponse(
+            content=final_content,
+            thinking=thinking,
+            usage=usage
+        )
 
-            kwargs = {
-                "max_tokens": self.max_tokens,
-                "model": self.model,
-                "system": system_instruction,
-                "messages": messages,
-                "temperature": self.temperature,
-            }
-            
-            if anthropic_tools:
-                kwargs["tools"] = anthropic_tools
-            
-            # Add thinking support for models that support it
-            if self.thinking_budget > 0 and ("sonnet" in self.model.lower() or "3-7" in self.model.lower()):
-                kwargs["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": self.thinking_budget
-                }
-                kwargs["temperature"] = 1.0
-            else:
-                if self.top_p is not None:
-                    kwargs["top_p"] = self.top_p
-                if self.top_k is not None:
-                    kwargs["top_k"] = self.top_k
-            
-            completion = self.client.messages.create(**kwargs)
+    @overload
+    def invoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
+        ...
 
-            if not isinstance(completion, Message):
-                raise ValueError("Unexpected response type from Anthropic API")
+    def invoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
+        system_prompt, anthropic_messages = self._convert_messages(messages)
+        anthropic_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": anthropic_messages,
+            "system": system_prompt,
+            "tools": anthropic_tools,
+            "max_tokens": 4096, # Default max tokens
+            **self.kwargs
+        }
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        
+        if structured_output:
+            # Simulate structured output via tool calling
+            params["tools"] = [{
+                "name": "record_result",
+                "description": f"Record the structured result: {structured_output.__name__}",
+                "input_schema": structured_output.model_json_schema()
+            }]
+            params["tool_choice"] = {"type": "tool", "name": "record_result"}
             
-            content, tool_message, thinking, thinking_signature = self._parse_response(completion)
+            response = self.client.messages.create(**params)
+            tool_use = next(b for b in response.content if b.type == "tool_use")
+            parsed = structured_output(**tool_use.input)
             
-            if tool_message:
-                response_content = tool_message
-            elif structured_output:
-                # Parse structured output from JSON
-                try:
-                    response_content = structured_output.model_validate_json(content)
-                except Exception as e:
-                    raise ValueError(f"Failed to parse structured output: {e}")
-            else:
-                response_content = AIMessage(content=content, thinking=thinking, thinking_signature=thinking_signature)
-
             return ChatLLMResponse(
-                content=response_content,
-                thinking=thinking,
+                content=parsed,
                 usage=ChatLLMUsage(
-                    prompt_tokens=completion.usage.input_tokens,
-                    completion_tokens=completion.usage.output_tokens,
-                    total_tokens=completion.usage.input_tokens + completion.usage.output_tokens,
-                    thinking_tokens=getattr(completion.usage, 'thinking_tokens', 0)
+                    prompt_tokens=response.usage.input_tokens,
+                    completion_tokens=response.usage.output_tokens,
+                    total_tokens=response.usage.input_tokens + response.usage.output_tokens
                 )
             )
-        except Exception as e:
-            raise RuntimeError(f"Anthropic API error: {str(e)}")
 
-    async def ainvoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False):
-        try:
-            system_instruction, messages = self.serialize_messages(messages)
-            anthropic_tools = self._prepare_tools(tools)
+        response = self.client.messages.create(**params)
+        return self._process_response(response)
 
-            kwargs = {
-                "max_tokens": self.max_tokens,
-                "model": self.model,
-                "system": system_instruction,
-                "messages": messages,
-                "temperature": self.temperature,
-            }
+    @overload
+    async def ainvoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
+        ...
+
+    async def ainvoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
+        system_prompt, anthropic_messages = self._convert_messages(messages)
+        anthropic_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": anthropic_messages,
+            "system": system_prompt,
+            "tools": anthropic_tools,
+            "max_tokens": 4096,
+            **self.kwargs
+        }
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        
+        if structured_output:
+            params["tools"] = [{
+                "name": "record_result",
+                "description": f"Record the structured result: {structured_output.__name__}",
+                "input_schema": structured_output.model_json_schema()
+            }]
+            params["tool_choice"] = {"type": "tool", "name": "record_result"}
             
-            if anthropic_tools:
-                kwargs["tools"] = anthropic_tools
+            response = await self.aclient.messages.create(**params)
+            tool_use = next(b for b in response.content if b.type == "tool_use")
+            parsed = structured_output(**tool_use.input)
             
-            # Add thinking support for models that support it
-            if self.thinking_budget > 0 and ("sonnet" in self.model.lower() or "3-7" in self.model.lower()):
-                kwargs["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": self.thinking_budget
-                }
-                kwargs["temperature"] = 1.0
-            else:
-                if self.top_p is not None:
-                    kwargs["top_p"] = self.top_p
-                if self.top_k is not None:
-                    kwargs["top_k"] = self.top_k
-
-            completion = await self.async_client.messages.create(**kwargs)
-
-            if not isinstance(completion, Message):
-                raise ValueError("Unexpected response type from Anthropic API")
-            
-            content, tool_message, thinking, thinking_signature = self._parse_response(completion)
-            
-            if tool_message:
-                response_content = tool_message
-            elif structured_output:
-                try:
-                    response_content = structured_output.model_validate_json(content)
-                except Exception as e:
-                    raise ValueError(f"Failed to parse structured output: {e}")
-            else:
-                response_content = AIMessage(content=content, thinking=thinking, thinking_signature=thinking_signature)
-
             return ChatLLMResponse(
-                content=response_content,
-                thinking=thinking,
+                content=parsed,
                 usage=ChatLLMUsage(
-                    prompt_tokens=completion.usage.input_tokens,
-                    completion_tokens=completion.usage.output_tokens,
-                    total_tokens=completion.usage.input_tokens + completion.usage.output_tokens,
-                    thinking_tokens=getattr(completion.usage, 'thinking_tokens', 0)
+                    prompt_tokens=response.usage.input_tokens,
+                    completion_tokens=response.usage.output_tokens,
+                    total_tokens=response.usage.input_tokens + response.usage.output_tokens
                 )
             )
-        except Exception as e:
-            raise RuntimeError(f"Anthropic API error: {str(e)}")
+
+        response = await self.aclient.messages.create(**params)
+        return self._process_response(response)
+
+    @overload
+    def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
+        ...
 
     def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
-        try:
-            system_instruction, messages = self.serialize_messages(messages)
-            anthropic_tools = self._prepare_tools(tools)
+        system_prompt, anthropic_messages = self._convert_messages(messages)
+        anthropic_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": anthropic_messages,
+            "system": system_prompt,
+            "tools": anthropic_tools,
+            "max_tokens": 4096,
+            **self.kwargs
+        }
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        
+        with self.client.messages.stream(**params) as stream:
+            for event in stream:
+                if event.type == "text":
+                    yield ChatLLMResponse(content=AIMessage(content=event.text))
+                elif event.type == "input_json":
+                     # Support partial tool call yield? 
+                     # For now, we skip streaming for tool calls in Agent logic
+                     pass
 
-            kwargs = {
-                "max_tokens": self.max_tokens,
-                "model": self.model,
-                "system": system_instruction,
-                "messages": messages,
-                "temperature": self.temperature,
-            }
-            
-            if anthropic_tools:
-                kwargs["tools"] = anthropic_tools
-            
-            if self.thinking_budget > 0 and ("sonnet" in self.model.lower() or "3-7" in self.model.lower()):
-                kwargs["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": self.thinking_budget
-                }
-                kwargs["temperature"] = 1.0
-            else:
-                if self.top_p is not None:
-                    kwargs["top_p"] = self.top_p
-                if self.top_k is not None:
-                    kwargs["top_k"] = self.top_k
-
-            with self.client.messages.stream(**kwargs) as stream:
-                for event in stream:
-                    if event.type == "content_block_delta":
-                        if event.delta.type == "text_delta":
-                            yield ChatLLMResponse(content=AIMessage(content=event.delta.text))
-                        # Handle thinking deltas if available
-                        elif hasattr(event.delta, 'thinking') and event.delta.thinking:
-                            yield ChatLLMResponse(thinking=event.delta.thinking)
-        except Exception as e:
-            raise RuntimeError(f"Anthropic API streaming error: {str(e)}")
+    @overload
+    async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
+        ...
 
     async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
-        try:
-            system_instruction, messages = self.serialize_messages(messages)
-            anthropic_tools = self._prepare_tools(tools)
-            
-            kwargs = {
-                "max_tokens": self.max_tokens,
-                "model": self.model,
-                "system": system_instruction,
-                "messages": messages,
-                "temperature": self.temperature,
-            }
-            
-            if anthropic_tools:
-                kwargs["tools"] = anthropic_tools
-            
-            if self.thinking_budget > 0 and ("sonnet" in self.model.lower() or "3-7" in self.model.lower()):
-                kwargs["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": self.thinking_budget
-                }
-                kwargs["temperature"] = 1.0
-            else:
-                if self.top_p is not None:
-                    kwargs["top_p"] = self.top_p
-                if self.top_k is not None:
-                    kwargs["top_k"] = self.top_k
-                
-            async with self.async_client.messages.stream(**kwargs) as stream:
-                async for event in stream:
-                    if event.type == "content_block_delta":
-                        if event.delta.type == "text_delta":
-                            yield ChatLLMResponse(content=AIMessage(content=event.delta.text))
-                        elif hasattr(event.delta, 'thinking') and event.delta.thinking:
-                            yield ChatLLMResponse(thinking=event.delta.thinking)
-        except Exception as e:
-            raise RuntimeError(f"Anthropic API streaming error: {str(e)}")
-
-    def get_model_specification(self):
-        # Model context windows as of latest known specs
-        context_windows = {
-            "claude-3-5-sonnet-20241022": 200000,
-            "claude-3-5-sonnet-20240620": 200000,
-            "claude-3-5-haiku-20241022": 200000,
-            "claude-3-opus-20240229": 200000,
-            "claude-3-sonnet-20240229": 200000,
-            "claude-3-haiku-20240307": 200000,
+        system_prompt, anthropic_messages = self._convert_messages(messages)
+        anthropic_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": anthropic_messages,
+            "system": system_prompt,
+            "tools": anthropic_tools,
+            "max_tokens": 4096,
+            **self.kwargs
         }
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
         
-        context_window = context_windows.get(self.model, 200000)
-        
-        return ModelMetadata(
-            name=self.model,
-            context_window=context_window,
+        async with self.aclient.messages.stream(**params) as stream:
+            async for event in stream:
+                if event.type == "text":
+                    yield ChatLLMResponse(content=AIMessage(content=event.text))
+
+    def get_metadata(self) -> Metadata:
+        return Metadata(
+            name=self._model,
+            context_window=200000,
             owned_by="anthropic"
         )

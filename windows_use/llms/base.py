@@ -1,11 +1,44 @@
 from typing import Protocol, runtime_checkable, overload, Iterator, AsyncIterator
-from windows_use.llms.views import ChatLLMResponse, ModelMetadata
+from windows_use.llms.views import ChatLLMResponse, Metadata
 from windows_use.messages import BaseMessage
 from pydantic import BaseModel
 from windows_use.tool import Tool
 
 @runtime_checkable
 class BaseChatLLM(Protocol):
+
+    def sanitize_schema(self, tool_schema: dict) -> dict:
+        """
+        Convert full JSON schema into a minimal function schema.
+        Keeps only: name, description, and simplified parameters (type, enum).
+        """
+        params = tool_schema.get("parameters", {})
+        properties = params.get("properties", {})
+        required = params.get("required", [])
+
+        clean_props = {}
+
+        for name, prop in properties.items():
+            if isinstance(prop, dict):
+                t = prop.get("type", "string")
+                enum_vals = prop.get("enum")
+            else:
+                t = "string"
+                enum_vals = None
+
+            # Normalize to valid JSON schema types
+            if t not in {"string", "integer", "number", "boolean", "array", "object"}:
+                t = "string"
+
+        return {
+            "name": tool_schema.get("name"),
+            "description": tool_schema.get("description"),
+            "parameters": {
+                "type": "object",
+                "properties": clean_props,
+                "required": required
+            }
+        }
 
     @property
     def model_name(self) -> str:
@@ -32,7 +65,7 @@ class BaseChatLLM(Protocol):
         ...
 
     @overload
-    def get_model_specification(self) -> ModelMetadata:
+    def get_metadata(self) -> Metadata:
         ...
 
     

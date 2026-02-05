@@ -14,7 +14,7 @@ class ChatLLMResponse(BaseModel):
     thinking_signature: str|bytes|None = None
     usage: ChatLLMUsage|None = None
 
-class ModelMetadata(BaseModel):
+class Metadata(BaseModel):
     name: str
     context_window: int
     owned_by: str

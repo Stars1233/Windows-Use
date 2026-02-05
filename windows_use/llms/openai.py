@@ -1,434 +1,339 @@
-from openai.types.chat import (
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionUserMessageParam,
-    ChatCompletionContentPartTextParam,
-    ChatCompletionContentPartImageParam,
-    ChatCompletionSystemMessageParam,
-    ChatCompletionMessage,
-    ChatCompletionMessageParam
-)
-from openai.types.shared_params.response_format_json_schema import JSONSchema, ResponseFormatJSONSchema
-from windows_use.messages import BaseMessage, SystemMessage, AIMessage, HumanMessage, ImageMessage, ToolMessage
-from openai.types.chat.chat_completion_content_part_image_param import ImageURL
-from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, ModelMetadata
-from typing import Iterator, AsyncIterator, Literal
-from openai import OpenAI, AsyncOpenAI
-from windows_use.llms.base import BaseChatLLM
-from windows_use.tool.service import Tool
-from dataclasses import dataclass
-from pydantic import BaseModel
-from httpx import Client
-import json
 import os
+import json
+import logging
+from typing import Iterator, AsyncIterator, List, Optional, Any, Union, overload
+from openai import OpenAI, AsyncOpenAI
+from pydantic import BaseModel
+from windows_use.llms.base import BaseChatLLM
+from windows_use.llms.views import ChatLLMResponse, ChatLLMUsage, Metadata
+from windows_use.messages import BaseMessage, SystemMessage, HumanMessage, AIMessage, ImageMessage, ToolMessage
+from windows_use.tool import Tool
 
+logger = logging.getLogger(__name__)
 
 class ChatOpenAI(BaseChatLLM):
+    """
+    OpenAI LLM implementation following the BaseChatLLM protocol.
+    """
+    
     def __init__(
         self,
-        model: str,
-        api_key: str | None = None,
-        organization: str | None = None,
-        project: str | None = None,
-        base_url: str | None = None,
-        websocket_base_url: str | None = None,
-        temperature: float = 0.7,
-        max_retries: int = 3,
-        reasoning_effort: Literal["low", "medium", "high"] = "medium",
-        max_tokens: int | None = None,
-        top_p: float | None = None,
-        frequency_penalty: float | None = None,
-        presence_penalty: float | None = None,
-        timeout: int | None = None,
-        default_headers: dict[str, str] | None = None,
-        default_query: dict[str, object] | None = None,
-        http_client: Client | None = None,
-        strict_response_validation: bool = False
+        model: str = "gpt-4o",
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        timeout: float = 600.0,
+        max_retries: int = 2,
+        temperature: Optional[float] = None,
+        **kwargs
     ):
-        self.model = model
-        if not api_key and not os.getenv("OPENAI_API_KEY"):
-            raise ValueError("OPENAI_API_KEY is not set")
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        """
+        Initialize the OpenAI LLM.
+
+        Args:
+            model (str): The model name to use. Defaults to "gpt-4o".
+            api_key (str, optional): OpenAI API key. Defaults to OPENAI_API_KEY environment variable.
+            base_url (str, optional): Base URL for the API. Defaults to OPENAI_BASE_URL environment variable.
+            timeout (float): Request timeout in seconds.
+            max_retries (int): Maximum number of retries for failed requests.
+            temperature (float, optional): Sampling temperature.
+            **kwargs: Additional arguments to pass to the OpenAI chat completions create method.
+        """
+        self._model = model
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        self.base_url = base_url or os.environ.get("OPENAI_BASE_URL")
         self.temperature = temperature
-        self.max_retries = max_retries
-        self.reasoning_effort = reasoning_effort
-        self.max_tokens = max_tokens
-        self.top_p = top_p
-        self.frequency_penalty = frequency_penalty
-        self.presence_penalty = presence_penalty
-        self.organization = organization
-        self.project = project
-        self.base_url = base_url
-        self.timeout = timeout
-        self.default_headers = default_headers
-        self.default_query = default_query
-        self.http_client = http_client
-        self.websocket_base_url = websocket_base_url
-        self.strict_response_validation = strict_response_validation
+        
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        self.aclient = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+        self.kwargs = kwargs
 
     @property
-    def client(self) -> OpenAI:
-        """Initialize synchronous OpenAI client"""
-        kwargs = {
-            "api_key": self.api_key,
-            "max_retries": self.max_retries,
-            "_strict_response_validation": self.strict_response_validation
-        }
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        if self.websocket_base_url:
-            kwargs["websocket_base_url"] = self.websocket_base_url
-        if self.timeout:
-            kwargs["timeout"] = self.timeout
-        if self.organization:
-            kwargs["organization"] = self.organization
-        if self.project:
-            kwargs["project"] = self.project
-        if self.default_headers:
-            kwargs["default_headers"] = self.default_headers
-        if self.default_query:
-            kwargs["default_query"] = self.default_query
-        if self.http_client:
-            kwargs["http_client"] = self.http_client
-        
-        return OpenAI(**kwargs)
-
-    @property
-    def async_client(self) -> AsyncOpenAI:
-        """Initialize asynchronous OpenAI client"""
-        kwargs = {
-            "api_key": self.api_key,
-            "max_retries": self.max_retries,
-            "_strict_response_validation": self.strict_response_validation
-        }
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        if self.timeout:
-            kwargs["timeout"] = self.timeout
-        if self.organization:
-            kwargs["organization"] = self.organization
-        if self.project:
-            kwargs["project"] = self.project
-        if self.default_headers:
-            kwargs["default_headers"] = self.default_headers
-        if self.default_query:
-            kwargs["default_query"] = self.default_query
-        if self.http_client:
-            kwargs["http_client"] = self.http_client
-        
-        return AsyncOpenAI(**kwargs)
+    def model_name(self) -> str:
+        return self._model
 
     @property
     def provider(self) -> str:
         return "openai"
 
-    @property
-    def model_name(self) -> str:
-        return self.model
-
-    def serialize_messages(self, messages: list[BaseMessage]) -> list[ChatCompletionMessageParam]:
-        """Convert BaseMessage objects to OpenAI message format"""
-        serialized = []
-        for message in messages:
-            if isinstance(message, SystemMessage):
-                content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
-                serialized.append(ChatCompletionSystemMessageParam(role="system", content=content))
-            elif isinstance(message, HumanMessage):
-                content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
-                serialized.append(ChatCompletionUserMessageParam(role="user", content=content))
-            elif isinstance(message, AIMessage):
-                serialized_msg = {"role": "assistant", "content": message.content}
-                if message.thinking:
-                    serialized_msg["reasoning_content"] = message.thinking
-                serialized.append(serialized_msg)
-            elif isinstance(message, ToolMessage):
-                # Assistant Tool Call
-                serialized_msg = {
-                    "role": "assistant",
-                    "tool_calls": [{
-                        "id": message.id,
-                        "type": "function",
-                        "function": {
-                            "name": message.name,
-                            "arguments": json.dumps(message.params)
-                        }
-                    }]
-                }
-                if message.thinking:
-                    serialized_msg["reasoning_content"] = message.thinking
-                serialized.append(serialized_msg)
-                # Tool Result
-                if message.content:
-                    serialized.append({
-                        "role": "tool",
-                        "tool_call_id": message.id,
-                        "content": str(message.content)
+    def _convert_messages(self, messages: List[BaseMessage]) -> List[dict]:
+        """
+        Convert BaseMessage objects to OpenAI-compatible message dictionaries.
+        """
+        openai_messages = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                openai_messages.append({"role": "system", "content": msg.content})
+            elif isinstance(msg, HumanMessage):
+                openai_messages.append({"role": "user", "content": msg.content})
+            elif isinstance(msg, ImageMessage):
+                content_list = []
+                if msg.content:
+                    content_list.append({"type": "text", "text": msg.content})
+                
+                b64_imgs = msg.convert_images(format="base64")
+                for b64 in b64_imgs:
+                    content_list.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{msg.mime_type};base64,{b64}"}
                     })
-            elif isinstance(message, ImageMessage):
-                message.scale_images(scale=0.7)
-                images = message.convert_images("base64")
-                content = [ChatCompletionContentPartTextParam(type="text", text=message.content)]
-                
-                for image in images:
-                    # Ensure proper data URL format
-                    if not image.startswith('data:'):
-                        image = f"data:{message.mime_type};base64,{image}"
-                    
-                    content.append(ChatCompletionContentPartImageParam(
-                        type="image_url",
-                        image_url=ImageURL(url=image, detail="auto")
-                    ))
-                
-                serialized.append(ChatCompletionUserMessageParam(role="user", content=content))
-            else:
-                raise ValueError(f"Unsupported message type: {type(message)}")
-        return serialized
+                openai_messages.append({"role": "user", "content": content_list})
+            elif isinstance(msg, AIMessage):
+                openai_messages.append({"role": "assistant", "content": msg.content})
+            elif isinstance(msg, ToolMessage):
+                # Reconstruct the tool call and the result for history consistency
+                tool_call = {
+                    "id": msg.id,
+                    "type": "function",
+                    "function": {
+                        "name": msg.name,
+                        "arguments": json.dumps(msg.params)
+                    }
+                }
+                openai_messages.append({
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [tool_call]
+                })
+                openai_messages.append({
+                    "role": "tool",
+                    "tool_call_id": msg.id,
+                    "content": msg.content or ""
+                })
+        return openai_messages
 
-    def _prepare_tools(self, tools: list[Tool]) -> list[dict] | None:
-        """Convert tools to OpenAI format"""
-        if not tools:
-            return None
+    def _convert_tools(self, tools: List[Tool]) -> List[dict]:
+        """
+        Convert Tool objects to OpenAI-compatible tool definitions.
+        """
+        return [
+            {
+                "type": "function",
+                "function": tool.json_schema
+            }
+            for tool in tools
+        ]
+
+    def _process_response(self, response: Any) -> ChatLLMResponse:
+        """
+        Process OpenAI API response into ChatLLMResponse object.
+        """
+        choice = response.choices[0]
+        message = choice.message
+        usage_data = response.usage
         
-        return [{'type': 'function', 'function': tool.json_schema} for tool in tools]
+        # Capture reasoning tokens if available
+        thinking_tokens = None
+        if hasattr(usage_data, 'completion_tokens_details') and usage_data.completion_tokens_details:
+             thinking_tokens = getattr(usage_data.completion_tokens_details, 'reasoning_tokens', None)
 
-    def _prepare_response_format(self, structured_output: BaseModel | None, json_mode: bool):
-        """Prepare response format for structured output or JSON mode"""
-        if structured_output:
-            return ResponseFormatJSONSchema(
-                type="json_schema",
-                json_schema=JSONSchema(
-                    name=structured_output.__class__.__name__,
-                    description="Model output structured as JSON schema",
-                    schema=structured_output.model_json_schema()
-                )
-            )
-        elif json_mode:
-            return {"type": "json_object"}
-        return None
-
-    def _parse_response(self, message: ChatCompletionMessage, structured_output: BaseModel | None = None) -> tuple[BaseMessage | BaseModel, str | None]:
-        """Parse OpenAI response into content and thinking"""
+        usage = ChatLLMUsage(
+            prompt_tokens=usage_data.prompt_tokens,
+            completion_tokens=usage_data.completion_tokens,
+            total_tokens=usage_data.total_tokens,
+            thinking_tokens=thinking_tokens
+        )
+        
         thinking = getattr(message, 'reasoning_content', None)
+        content = None
         
         if message.tool_calls:
+            # Handle tool call (picking the first one as per Agent expectations)
             tool_call = message.tool_calls[0]
+            try:
+                params = json.loads(tool_call.function.arguments)
+            except json.JSONDecodeError:
+                params = {}
+                
             content = ToolMessage(
                 id=tool_call.id,
                 name=tool_call.function.name,
-                params=json.loads(tool_call.function.arguments),
-                content=None,
-                thinking=thinking
+                params=params
             )
-        elif structured_output:
-            try:
-                content = structured_output.model_validate_json(message.content)
-            except Exception as e:
-                raise ValueError(f"Failed to parse structured output: {e}")
         else:
-            content = AIMessage(content=message.content or "", thinking=thinking)
-        
-        return content, thinking
+            # Handle regular completion
+            content = AIMessage(content=message.content)
+            
+        if thinking:
+            content.thinking = thinking
+            
+        return ChatLLMResponse(
+            content=content,
+            thinking=thinking,
+            usage=usage
+        )
+
+    @overload
+    def invoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
+        ...
 
     def invoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
-        """Synchronous invocation of OpenAI chat completion"""
-        try:
-            openai_tools = self._prepare_tools(tools)
-            response_format = self._prepare_response_format(structured_output, json_mode)
-            
-            kwargs = {
-                "model": self.model,
-                "messages": self.serialize_messages(messages),
-            }
-            if "o1" in self.model or "o3" in self.model:
-                kwargs["reasoning_effort"] = self.reasoning_effort
-            else:
-                kwargs["temperature"] = self.temperature
-                if self.top_p is not None:
-                    kwargs["top_p"] = self.top_p
-                if self.frequency_penalty is not None:
-                    kwargs["frequency_penalty"] = self.frequency_penalty
-                if self.presence_penalty is not None:
-                    kwargs["presence_penalty"] = self.presence_penalty
-            
-            if self.max_tokens is not None:
-                kwargs["max_tokens"] = self.max_tokens
-            
-            if openai_tools:
-                kwargs["tools"] = openai_tools
-            if response_format:
-                kwargs["response_format"] = response_format
-            
-            completion = self.client.chat.completions.create(**kwargs)
-            
-            message = completion.choices[0].message
-            content, thinking = self._parse_response(message, structured_output)
-
+        openai_messages = self._convert_messages(messages)
+        openai_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": openai_messages,
+            "tools": openai_tools,
+            **self.kwargs
+        }
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        
+        if structured_output:
+            response = self.client.beta.chat.completions.parse(
+                **params,
+                response_format=structured_output
+            )
             return ChatLLMResponse(
-                content=content,
-                thinking=thinking,
+                content=response.choices[0].message.parsed,
                 usage=ChatLLMUsage(
-                    prompt_tokens=completion.usage.prompt_tokens,
-                    completion_tokens=completion.usage.completion_tokens,
-                    total_tokens=completion.usage.total_tokens,
-                    thinking_tokens=getattr(completion.usage.completion_tokens_details, 'reasoning_tokens', 0) if hasattr(completion.usage, 'completion_tokens_details') else 0
+                    prompt_tokens=response.usage.prompt_tokens,
+                    completion_tokens=response.usage.completion_tokens,
+                    total_tokens=response.usage.total_tokens
                 )
             )
-        except Exception as e:
-            raise RuntimeError(f"OpenAI API error: {str(e)}")
+            
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+            
+        response = self.client.chat.completions.create(**params)
+        return self._process_response(response)
+
+    @overload
+    async def ainvoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
+        ...
 
     async def ainvoke(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> ChatLLMResponse:
-        """Asynchronous invocation of OpenAI chat completion"""
-        try:
-            openai_tools = self._prepare_tools(tools)
-            response_format = self._prepare_response_format(structured_output, json_mode)
-            
-            kwargs = {
-                "model": self.model,
-                "messages": self.serialize_messages(messages),
-            }
-            if "o1" in self.model or "o3" in self.model:
-                kwargs["reasoning_effort"] = self.reasoning_effort
-            else:
-                kwargs["temperature"] = self.temperature
-                if self.top_p is not None:
-                    kwargs["top_p"] = self.top_p
-                if self.frequency_penalty is not None:
-                    kwargs["frequency_penalty"] = self.frequency_penalty
-                if self.presence_penalty is not None:
-                    kwargs["presence_penalty"] = self.presence_penalty
-            
-            if self.max_tokens is not None:
-                kwargs["max_tokens"] = self.max_tokens
-            
-            if openai_tools:
-                kwargs["tools"] = openai_tools
-            if response_format:
-                kwargs["response_format"] = response_format
-            
-            completion = await self.async_client.chat.completions.create(**kwargs)
-            
-            message = completion.choices[0].message
-            content, thinking = self._parse_response(message, structured_output)
-
+        openai_messages = self._convert_messages(messages)
+        openai_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": openai_messages,
+            "tools": openai_tools,
+            **self.kwargs
+        }
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        
+        if structured_output:
+            response = await self.aclient.beta.chat.completions.parse(
+                **params,
+                response_format=structured_output
+            )
             return ChatLLMResponse(
-                content=content,
-                thinking=thinking,
+                content=response.choices[0].message.parsed,
                 usage=ChatLLMUsage(
-                    prompt_tokens=completion.usage.prompt_tokens,
-                    completion_tokens=completion.usage.completion_tokens,
-                    total_tokens=completion.usage.total_tokens,
-                    thinking_tokens=getattr(completion.usage.completion_tokens_details, 'reasoning_tokens', 0) if hasattr(completion.usage, 'completion_tokens_details') else 0
+                    prompt_tokens=response.usage.prompt_tokens,
+                    completion_tokens=response.usage.completion_tokens,
+                    total_tokens=response.usage.total_tokens
                 )
             )
-        except Exception as e:
-            raise RuntimeError(f"OpenAI API error: {str(e)}")
+
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+            
+        response = await self.aclient.chat.completions.create(**params)
+        return self._process_response(response)
+
+    @overload
+    def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
+        ...
 
     def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
-        """Synchronous streaming of OpenAI chat completion"""
-        try:
-            openai_tools = self._prepare_tools(tools)
-            response_format = self._prepare_response_format(structured_output, json_mode)
+        openai_messages = self._convert_messages(messages)
+        openai_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": openai_messages,
+            "tools": openai_tools,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            **self.kwargs
+        }
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+
+        response = self.client.chat.completions.create(**params)
+        
+        for chunk in response:
+            if not chunk.choices:
+                if chunk.usage:
+                    yield ChatLLMResponse(usage=ChatLLMUsage(
+                        prompt_tokens=chunk.usage.prompt_tokens,
+                        completion_tokens=chunk.usage.completion_tokens,
+                        total_tokens=chunk.usage.total_tokens
+                    ))
+                continue
             
-            kwargs = {
-                "model": self.model,
-                "messages": self.serialize_messages(messages),
-                "stream": True,
-            }
-            if "o1" in self.model or "o3" in self.model:
-                kwargs["reasoning_effort"] = self.reasoning_effort
-            else:
-                kwargs["temperature"] = self.temperature
-                if self.top_p is not None:
-                    kwargs["top_p"] = self.top_p
-                if self.frequency_penalty is not None:
-                    kwargs["frequency_penalty"] = self.frequency_penalty
-                if self.presence_penalty is not None:
-                    kwargs["presence_penalty"] = self.presence_penalty
+            delta = chunk.choices[0].delta
             
-            if self.max_tokens is not None:
-                kwargs["max_tokens"] = self.max_tokens
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
             
-            if openai_tools:
-                kwargs["tools"] = openai_tools
-            if response_format:
-                kwargs["response_format"] = response_format
-            
-            stream = self.client.chat.completions.create(**kwargs)
-            
-            for chunk in stream:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    yield ChatLLMResponse(content=AIMessage(content=delta.content))
-                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                    yield ChatLLMResponse(thinking=delta.reasoning_content)
-        except Exception as e:
-            raise RuntimeError(f"OpenAI API streaming error: {str(e)}")
+            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                yield ChatLLMResponse(thinking=delta.reasoning_content)
+
+    @overload
+    async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
+        ...
 
     async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
-        """Asynchronous streaming of OpenAI chat completion"""
-        try:
-            openai_tools = self._prepare_tools(tools)
-            response_format = self._prepare_response_format(structured_output, json_mode)
-            
-            kwargs = {
-                "model": self.model,
-                "messages": self.serialize_messages(messages),
-                "stream": True,
-            }
-            if "o1" in self.model or "o3" in self.model:
-                kwargs["reasoning_effort"] = self.reasoning_effort
-            else:
-                kwargs["temperature"] = self.temperature
-                if self.top_p is not None:
-                    kwargs["top_p"] = self.top_p
-                if self.frequency_penalty is not None:
-                    kwargs["frequency_penalty"] = self.frequency_penalty
-                if self.presence_penalty is not None:
-                    kwargs["presence_penalty"] = self.presence_penalty
-            
-            if self.max_tokens is not None:
-                kwargs["max_tokens"] = self.max_tokens
-            
-            if openai_tools:
-                kwargs["tools"] = openai_tools
-            if response_format:
-                kwargs["response_format"] = response_format
-            
-            stream = await self.async_client.chat.completions.create(**kwargs)
-            
-            async for chunk in stream:
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    yield ChatLLMResponse(content=AIMessage(content=delta.content))
-                if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                    yield ChatLLMResponse(thinking=delta.reasoning_content)
-        except Exception as e:
-            raise RuntimeError(f"OpenAI API streaming error: {str(e)}")
+        openai_messages = self._convert_messages(messages)
+        openai_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": openai_messages,
+            "tools": openai_tools,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            **self.kwargs
+        }
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
 
-    def get_model_specification(self) -> ModelMetadata:
-        """Retrieve model metadata"""
-        try:
-            response = self.client.models.retrieve(model=self.model)
-            context_window = getattr(response, 'context_window', 128000)
-        except Exception:
-            # Fallback for known OpenAI models
-            context_windows = {
-                "gpt-4o": 128000,
-                "gpt-4o-mini": 128000,
-                "gpt-4-turbo": 128000,
-                "gpt-4": 8192,
-                "o1-preview": 128000,
-                "o1-mini": 128000,
-                "o1": 200000,
-            }
+        response = await self.aclient.chat.completions.create(**params)
+        
+        async for chunk in response:
+            if not chunk.choices:
+                if chunk.usage:
+                    yield ChatLLMResponse(usage=ChatLLMUsage(
+                        prompt_tokens=chunk.usage.prompt_tokens,
+                        completion_tokens=chunk.usage.completion_tokens,
+                        total_tokens=chunk.usage.total_tokens
+                    ))
+                continue
             
-            context_window = 128000  # Default
-            for key, window in context_windows.items():
-                if key in self.model.lower():
-                    context_window = window
-                    break
-                    
-        return ModelMetadata(
-            name=self.model,
-            context_window=context_window,
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
+            
+            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+                yield ChatLLMResponse(thinking=delta.reasoning_content)
+
+    def get_metadata(self) -> Metadata:
+        # Generic metadata, can be refined based on model name
+        return Metadata(
+            name=self._model,
+            context_window=128000,
             owned_by="openai"
         )
