@@ -56,7 +56,13 @@ class Agent(BaseAgent):
         self.auto_minimize=auto_minimize
         if use_annotation and not use_vision:
             logger.warning("use_vision is set to True if use_annotation is True.")
-        self.desktop = Desktop(use_vision=True if use_annotation else use_vision,use_annotation=use_annotation,use_accessibility=use_accessibility)
+        if use_annotation and not use_accessibility:
+            logger.warning("use_accessibility is set to True if use_annotation is True.")
+        self.desktop = Desktop(
+            use_vision=True if use_annotation else use_vision,
+            use_annotation=use_annotation,
+            use_accessibility=True if use_annotation else use_accessibility
+        )
         self.state=AgentState(max_steps=max_steps,max_consecutive_failures=max_consecutive_failures)
         self.telemetry=ProductTelemetry()
         self.watchdog = WatchDog()
@@ -87,7 +93,7 @@ class Agent(BaseAgent):
             query=self.state.task,
             step=self.state.step,
             max_steps=self.state.max_steps,
-            desktop_state=desktop_state
+            desktop=self.desktop
         )
         if self.desktop.use_vision and desktop_state.screenshot:
             image=desktop_state.screenshot
