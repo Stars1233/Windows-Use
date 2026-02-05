@@ -39,9 +39,9 @@ class Prompt:
                 raise ValueError(f"Invalid mode: {mode} (must be 'flash' or 'normal')")
          
     @staticmethod
-    def human(query:str,step:int,max_steps:int,desktop_state: DesktopState) -> str:
+    def human(query:str,step:int,max_steps:int,desktop:Desktop) -> str:
         cursor_location = pg.position()
-        tree_state = desktop_state.tree_state
+        desktop_state=desktop.desktop_state
         template = Path(files('windows_use.agent.prompt').joinpath('human.md')).read_text(encoding='utf-8')
 
         return template.format(**{
@@ -50,8 +50,8 @@ class Prompt:
             'active_window': desktop_state.active_window_to_string(),
             'windows': desktop_state.windows_to_string(),
             'cursor_location': f'({cursor_location.x},{cursor_location.y})',
-            'interactive_elements': tree_state.interactive_elements_to_string() or 'No interactive elements found',
-            'scrollable_elements': tree_state.scrollable_elements_to_string() or 'No scrollable elements found',
+            'interactive_elements': desktop_state.tree_state.interactive_elements_to_string() if desktop.use_accessibility else '',
+            'scrollable_elements': desktop_state.tree_state.scrollable_elements_to_string() if desktop.use_accessibility else '',
             'active_desktop': desktop_state.active_desktop_to_string(),
             'desktops': desktop_state.desktops_to_string(),
             'query':query

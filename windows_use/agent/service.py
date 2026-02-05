@@ -27,7 +27,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 class Agent(BaseAgent):
-    def __init__(self,mode:Literal["flash","normal"]="normal",instructions:list[str]=[],browser:Browser=Browser.EDGE, use_annotation:bool=False, llm: BaseChatLLM=None,max_consecutive_failures:int=3,max_steps:int=25,use_vision:bool=False,auto_minimize:bool=False,experimental:bool=False):
+    def __init__(self,mode:Literal["flash","normal"]="normal",instructions:list[str]=[],browser:Browser=Browser.EDGE,use_annotation:bool=False,use_accessibility:bool=True, llm: BaseChatLLM=None,max_consecutive_failures:int=3,max_steps:int=25,use_vision:bool=False,auto_minimize:bool=False,experimental:bool=False):
         '''
         Initialize the Agent.
 
@@ -54,14 +54,12 @@ class Agent(BaseAgent):
         self.max_steps=max_steps
         self.max_consecutive_failures=max_consecutive_failures
         self.auto_minimize=auto_minimize
-        self.use_annotation=use_annotation
-        if self.use_annotation and not use_vision:
+        if use_annotation and not use_vision:
             logger.warning("use_vision is set to True if use_annotation is True.")
-        self.use_vision=True if use_annotation else use_vision
+        self.desktop = Desktop(use_vision=True if use_annotation else use_vision,use_annotation=use_annotation,use_accessibility=use_accessibility)
         self.state=AgentState(max_steps=max_steps,max_consecutive_failures=max_consecutive_failures)
         self.telemetry=ProductTelemetry()
         self.watchdog = WatchDog()
-        self.desktop = Desktop()
         self.console=Console()
         self.prompt=Prompt()
         self.llm = llm
@@ -84,17 +82,14 @@ class Agent(BaseAgent):
 
     @property
     def state_message(self)->HumanMessage|ImageMessage:
-        desktop_state=self.desktop.get_state(
-            use_annotation=self.use_annotation,
-            use_vision=self.use_vision
-        )
+        desktop_state=self.desktop.get_state()
         content=self.prompt.human(
             query=self.state.task,
             step=self.state.step,
             max_steps=self.state.max_steps,
             desktop_state=desktop_state
         )
-        if self.use_vision and desktop_state.screenshot:
+        if self.desktop.use_vision and desktop_state.screenshot:
             image=desktop_state.screenshot
             return ImageMessage(image=image,content=content)
         return HumanMessage(content=content)

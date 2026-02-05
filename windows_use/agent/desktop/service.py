@@ -1,7 +1,7 @@
 from windows_use.vdm.core import get_all_desktops, get_current_desktop, is_window_on_current_desktop
 from windows_use.agent.desktop.views import DesktopState, Window, Browser, Status, Size
+from windows_use.agent.tree.views import BoundingBox, TreeElementNode,TreeState
 from windows_use.agent.desktop.config import PROCESS_PER_MONITOR_DPI_AWARE
-from windows_use.agent.tree.views import BoundingBox, TreeElementNode
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import ImageGrab, ImageFont, ImageDraw, Image
 from windows_use.agent.tree.service import Tree
@@ -41,12 +41,15 @@ pg.FAILSAFE=False
 pg.PAUSE=1.0
 
 class Desktop:
-    def __init__(self):
+    def __init__(self,use_vision:bool=False,use_annotation:bool=False,use_accessibility:bool=True):
+        self.use_vision=use_vision
+        self.use_annotation=use_annotation
+        self.use_accessibility=use_accessibility
         self.encoding=getpreferredencoding()
         self.tree=Tree(self)
         self.desktop_state=None
         
-    def get_state(self,use_annotation:bool=True,use_vision:bool=False,as_bytes:bool=False)->DesktopState:
+    def get_state(self,as_bytes:bool=False)->DesktopState:
         sleep(0.1)
         start_time = perf_counter()
 
@@ -71,15 +74,21 @@ class Desktop:
         #Preparing handles for Tree
         other_windows_handles=list(controls_handles-windows_handles)
 
-        tree_state=self.tree.get_state(active_window_handle,other_windows_handles)
+        if self.use_accessibility:
+            tree_state=self.tree.get_state(active_window_handle,other_windows_handles)
+        else:
+            tree_state=TreeState()
 
-        if use_vision:
-            if use_annotation:
-                nodes=tree_state.interactive_nodes
-                screenshot=self.get_annotated_screenshot(nodes=nodes)
+        if self.use_vision:
+            if self.use_annotation:
+                nodes=tree_state.interactive_nodes if tree_state else []
+                if nodes:
+                    screenshot=self.get_annotated_screenshot(nodes=nodes)
+                else:
+                    screenshot=self.get_screenshot()
             else:
                 screenshot=self.get_screenshot()
-            if as_bytes:
+            if as_bytes and screenshot:
                 buffered = io.BytesIO()
                 screenshot.save(buffered, format="PNG")
                 screenshot = buffered.getvalue()

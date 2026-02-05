@@ -10,10 +10,6 @@ class SharedBaseModel(BaseModel):
         description="A rigorous thinking process where you analyze the current state, potential issues, and plan the next steps effectively. (max. 3 sentences)"
     )
 
-    evaluate: Optional[str] = Field(...,
-        description="Evaluate the effectiveness of the previous action. Did it succeed? specific outcomes? (max. 2 sentences)"
-    )
-
 class App(SharedBaseModel):
     mode: Literal['launch', 'resize', 'switch'] = Field(
         'launch',
@@ -39,7 +35,7 @@ class App(SharedBaseModel):
 class Done(SharedBaseModel):
     answer: str = Field(
         ...,
-        description="Comprehensive answer in markdown format containing all requested information and task results",
+        description="Answer in markdown format containing all requested information and task results",
         examples=["## Task Completed\n\nThe task has been completed successfully. Here is the answer:\n- Item 1\n- Item 2"]
     )
 
@@ -121,27 +117,27 @@ class Type(SharedBaseModel):
         description="Text string to type into the focused element",
         examples=['hello world', 'user@example.com', 'search query']
     )
-    clear: Literal['true', 'false'] = Field(
+    clear: bool = Field(
         description="Whether to clear existing text before typing: 'true' replaces all content, 'false' appends to existing text",
-        default='false',
-        examples=['true', 'false']
+        default=False,
+        examples=[True, False]
     )
     caret_position: Literal['start', 'idle', 'end'] = Field(
         description="Caret positioning before typing: 'start' moves to beginning, 'end' moves to end, 'idle' leaves at current position",
         default='idle',
         examples=['start', 'end', 'idle']
     )
-    press_enter: Literal['true', 'false'] = Field(
+    press_enter: bool = Field(
         description="Whether to press Enter key after typing text: 'true' submits/confirms input, 'false' leaves cursor in field",
-        default='false',
-        examples=['true', 'false']
+        default=False,
+        examples=[True, False]
     )
 
 class MultiSelect(SharedBaseModel):
-    press_ctrl: Literal['true', 'false'] = Field(
+    press_ctrl: bool = Field(
         description="Whether to press Ctrl key before performing multiple selection: 'true' selects multiple elements, 'false' leaves cursor in field",
-        default='false',
-        examples=['true', 'false']
+        default=False,
+        examples=[True, False]
     )
     elements: list[list[int]] = Field(
         ...,

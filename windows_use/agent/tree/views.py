@@ -6,13 +6,13 @@ from typing import Optional
 class TreeState:
     root_node:Optional['TreeElementNode']=None
     dom_node:Optional['ScrollElementNode']=None
-    interactive_nodes:list['TreeElementNode']=field(default_factory=list)
-    scrollable_nodes:list['ScrollElementNode']=field(default_factory=list)
-    dom_informative_nodes:list['TextElementNode']=field(default_factory=list)
+    interactive_nodes:list['TreeElementNode']|None=field(default_factory=list)
+    scrollable_nodes:list['ScrollElementNode']|None=field(default_factory=list)
+    dom_informative_nodes:list['TextElementNode']|None=field(default_factory=list)
 
     def interactive_elements_to_string(self) -> str:
         if not self.interactive_nodes:
-            return "No interactive elements"
+            return "No interactive elements found"
         # TOON-like format: Pipe-separated values with clear header
         # Using abbreviations in header to save tokens
         header = "# id|window|control_type|name|coords|focus"
@@ -24,7 +24,7 @@ class TreeState:
 
     def scrollable_elements_to_string(self) -> str:
         if not self.scrollable_nodes:
-            return "No scrollable elements"
+            return "No scrollable elements found"
         # TOON-like format
         header = "# id|window|control_type|name|coords|h_scroll|h_pct|v_scroll|v_pct|focus"
         rows = [header]
