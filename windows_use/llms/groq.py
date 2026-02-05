@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 class ChatGroq(BaseChatLLM):
     """
     Groq LLM implementation following the BaseChatLLM protocol.
+    
+    Groq provides ultra-fast inference for open-source models like:
+    - Llama 3.3 70B
+    - Mixtral
+    - Gemma 2
     """
     
     def __init__(
@@ -88,7 +93,7 @@ class ChatGroq(BaseChatLLM):
                     })
                 groq_messages.append({"role": "user", "content": content_list})
             elif isinstance(msg, AIMessage):
-                groq_messages.append({"role": "assistant", "content": msg.content})
+                groq_messages.append({"role": "assistant", "content": msg.content or ""})
             elif isinstance(msg, ToolMessage):
                 # Reconstruct for history consistency
                 tool_call = {
@@ -143,6 +148,7 @@ class ChatGroq(BaseChatLLM):
             try:
                 params = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
+                logger.warning(f"Failed to parse tool arguments: {tool_call.function.arguments}")
                 params = {}
                 
             content = ToolMessage(
@@ -151,7 +157,7 @@ class ChatGroq(BaseChatLLM):
                 params=params
             )
         else:
-            content = AIMessage(content=message.content)
+            content = AIMessage(content=message.content or "")
             
         return ChatLLMResponse(
             content=content,
@@ -169,29 +175,47 @@ class ChatGroq(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": groq_messages,
-            "tools": groq_tools,
             **self.kwargs
         }
+        
+        # Only add tools if they exist
+        if groq_tools:
+            params["tools"] = groq_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
-        if json_mode:
+        # Handle structured output and json_mode
+        if structured_output:
+            # Groq doesn't have beta.parse, so use json_mode and manual parsing
+            params["response_format"] = {"type": "json_object"}
+        elif json_mode:
             params["response_format"] = {"type": "json_object"}
             
         response = self.client.chat.completions.create(**params)
         
         if structured_output:
-            import json
-            parsed = structured_output.model_validate_json(response.choices[0].message.content)
-            return ChatLLMResponse(
-                content=parsed,
-                usage=ChatLLMUsage(
-                    prompt_tokens=response.usage.prompt_tokens,
-                    completion_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens
+            try:
+                # Parse the JSON response into the structured output
+                content_text = response.choices[0].message.content
+                if content_text:
+                    parsed = structured_output.model_validate_json(content_text)
+                else:
+                    # Fallback to empty object if no content
+                    parsed = structured_output()
+                
+                return ChatLLMResponse(
+                    content=parsed,
+                    usage=ChatLLMUsage(
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                        total_tokens=response.usage.total_tokens
+                    )
                 )
-            )
-
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse structured output: {e}")
+                # Fall through to normal response processing
+        
         return self._process_response(response)
 
     @overload
@@ -205,40 +229,77 @@ class ChatGroq(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": groq_messages,
-            "tools": groq_tools,
             **self.kwargs
         }
+        
+        if groq_tools:
+            params["tools"] = groq_tools
+        
+        if self.temperature is not None:
+            params["temperature"] = self.temperature
+        
+        if structured_output:
+            params["response_format"] = {"type": "json_object"}
+        elif json_mode:
+            params["response_format"] = {"type": "json_object"}
+            
+        response = await self.aclient.chat.completions.create(**params)
+        
+        if structured_output:
+            try:
+                content_text = response.choices[0].message.content
+                if content_text:
+                    parsed = structured_output.model_validate_json(content_text)
+                else:
+                    parsed = structured_output()
+                
+                return ChatLLMResponse(
+                    content=parsed,
+                    usage=ChatLLMUsage(
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                        total_tokens=response.usage.total_tokens
+                    )
+                )
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse structured output: {e}")
+        
+        return self._process_response(response)
+
+    @overload
+    def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
+        ...
+
+    def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
+        groq_messages = self._convert_messages(messages)
+        groq_tools = self._convert_tools(tools) if tools else None
+        
+        params = {
+            "model": self._model,
+            "messages": groq_messages,
+            "stream": True,
+            **self.kwargs
+        }
+        
+        if groq_tools:
+            params["tools"] = groq_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
         if json_mode:
             params["response_format"] = {"type": "json_object"}
-            
-        response = await self.aclient.chat.completions.create(**params)
-        return self._process_response(response)
-
-    @overload
-    def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
-        ...
-
-    def stream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> Iterator[ChatLLMResponse]:
-        groq_messages = self._convert_messages(messages)
-        groq_tools = self._convert_tools(tools) if tools else None
-        
-        params = {
-            "model": self._model,
-            "messages": groq_messages,
-            "tools": groq_tools,
-            "stream": True,
-            **self.kwargs
-        }
-        if self.temperature is not None:
-            params["temperature"] = self.temperature
         
         response = self.client.chat.completions.create(**params)
+        
         for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield ChatLLMResponse(content=AIMessage(content=chunk.choices[0].delta.content))
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
 
     @overload
     async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
@@ -251,21 +312,43 @@ class ChatGroq(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": groq_messages,
-            "tools": groq_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if groq_tools:
+            params["tools"] = groq_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+        
         response = await self.aclient.chat.completions.create(**params)
+        
         async for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield ChatLLMResponse(content=AIMessage(content=chunk.choices[0].delta.content))
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
 
     def get_metadata(self) -> Metadata:
+        # Context windows vary by model
+        context_window = 128000  # Default
+        
+        if "llama-3.3" in self._model or "llama-3.1" in self._model:
+            context_window = 128000
+        elif "mixtral" in self._model:
+            context_window = 32768
+        elif "gemma-2" in self._model:
+            context_window = 8192
+        
         return Metadata(
             name=self._model,
-            context_window=128000,
+            context_window=context_window,
             owned_by="groq"
         )

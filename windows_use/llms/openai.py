@@ -14,6 +14,14 @@ logger = logging.getLogger(__name__)
 class ChatOpenAI(BaseChatLLM):
     """
     OpenAI LLM implementation following the BaseChatLLM protocol.
+    
+    Supports:
+    - Standard chat completions
+    - Tool/function calling
+    - Structured outputs (via response_format)
+    - Streaming
+    - Vision (image inputs)
+    - Reasoning models (o1-preview, o1-mini)
     """
     
     def __init__(
@@ -64,6 +72,10 @@ class ChatOpenAI(BaseChatLLM):
     @property
     def provider(self) -> str:
         return "openai"
+    
+    def _is_reasoning_model(self) -> bool:
+        """Check if the model is a reasoning model (o1 series)."""
+        return self._model.startswith("o1")
 
     def _convert_messages(self, messages: List[BaseMessage]) -> List[dict]:
         """
@@ -88,7 +100,16 @@ class ChatOpenAI(BaseChatLLM):
                     })
                 openai_messages.append({"role": "user", "content": content_list})
             elif isinstance(msg, AIMessage):
-                openai_messages.append({"role": "assistant", "content": msg.content})
+                # Handle AIMessage with potential thinking content
+                msg_dict = {"role": "assistant", "content": msg.content}
+                
+                # For reasoning models, thinking might be stored differently
+                if hasattr(msg, 'thinking') and msg.thinking:
+                    # Store thinking in metadata or handle separately
+                    # OpenAI doesn't have a standard way to pass assistant's internal reasoning
+                    pass
+                    
+                openai_messages.append(msg_dict)
             elif isinstance(msg, ToolMessage):
                 # Reconstruct the tool call and the result for history consistency
                 tool_call = {
@@ -131,19 +152,32 @@ class ChatOpenAI(BaseChatLLM):
         message = choice.message
         usage_data = response.usage
         
-        # Capture reasoning tokens if available
-        thinking_tokens = None
-        if hasattr(usage_data, 'completion_tokens_details') and usage_data.completion_tokens_details:
-             thinking_tokens = getattr(usage_data.completion_tokens_details, 'reasoning_tokens', None)
-
+        # Build usage object
         usage = ChatLLMUsage(
             prompt_tokens=usage_data.prompt_tokens,
             completion_tokens=usage_data.completion_tokens,
-            total_tokens=usage_data.total_tokens,
-            thinking_tokens=thinking_tokens
+            total_tokens=usage_data.total_tokens
         )
         
-        thinking = getattr(message, 'reasoning_content', None)
+        # Capture reasoning tokens if available (o1 models)
+        if hasattr(usage_data, 'completion_tokens_details') and usage_data.completion_tokens_details:
+            reasoning_tokens = getattr(usage_data.completion_tokens_details, 'reasoning_tokens', None)
+            if reasoning_tokens is not None:
+                # Add as extra attribute
+                if hasattr(usage, '__dict__'):
+                    usage.__dict__['reasoning_tokens'] = reasoning_tokens
+                    logger.debug(f"Reasoning tokens used: {reasoning_tokens}")
+        
+        # Extract thinking/reasoning content (for o1 models)
+        thinking = None
+        if self._is_reasoning_model():
+            # For o1 models, check if there's reasoning content
+            # Note: The actual field name might vary based on OpenAI API updates
+            if hasattr(message, 'reasoning_content'):
+                thinking = message.reasoning_content
+            elif hasattr(choice, 'reasoning_content'):
+                thinking = choice.reasoning_content
+        
         content = None
         
         if message.tool_calls:
@@ -161,9 +195,10 @@ class ChatOpenAI(BaseChatLLM):
             )
         else:
             # Handle regular completion
-            content = AIMessage(content=message.content)
-            
-        if thinking:
+            content = AIMessage(content=message.content or "")
+        
+        # Attach thinking if available and the content object supports it
+        if thinking and hasattr(content, 'thinking'):
             content.thinking = thinking
             
         return ChatLLMResponse(
@@ -183,24 +218,40 @@ class ChatOpenAI(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": openai_messages,
-            "tools": openai_tools,
             **self.kwargs
         }
-        if self.temperature is not None:
+        
+        # Only add tools if they exist
+        if openai_tools:
+            params["tools"] = openai_tools
+        
+        # Temperature handling - o1 models don't support temperature
+        if self.temperature is not None and not self._is_reasoning_model():
             params["temperature"] = self.temperature
         
         if structured_output:
+            # Use beta parse endpoint for structured outputs
             response = self.client.beta.chat.completions.parse(
                 **params,
                 response_format=structured_output
             )
+            
+            # Build usage
+            usage = ChatLLMUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens
+            )
+            
+            # Add reasoning tokens if present
+            if hasattr(response.usage, 'completion_tokens_details') and response.usage.completion_tokens_details:
+                reasoning_tokens = getattr(response.usage.completion_tokens_details, 'reasoning_tokens', None)
+                if reasoning_tokens is not None and hasattr(usage, '__dict__'):
+                    usage.__dict__['reasoning_tokens'] = reasoning_tokens
+            
             return ChatLLMResponse(
                 content=response.choices[0].message.parsed,
-                usage=ChatLLMUsage(
-                    prompt_tokens=response.usage.prompt_tokens,
-                    completion_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens
-                )
+                usage=usage
             )
             
         if json_mode:
@@ -220,10 +271,13 @@ class ChatOpenAI(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": openai_messages,
-            "tools": openai_tools,
             **self.kwargs
         }
-        if self.temperature is not None:
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
+        if self.temperature is not None and not self._is_reasoning_model():
             params["temperature"] = self.temperature
         
         if structured_output:
@@ -231,13 +285,21 @@ class ChatOpenAI(BaseChatLLM):
                 **params,
                 response_format=structured_output
             )
+            
+            usage = ChatLLMUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens
+            )
+            
+            if hasattr(response.usage, 'completion_tokens_details') and response.usage.completion_tokens_details:
+                reasoning_tokens = getattr(response.usage.completion_tokens_details, 'reasoning_tokens', None)
+                if reasoning_tokens is not None and hasattr(usage, '__dict__'):
+                    usage.__dict__['reasoning_tokens'] = reasoning_tokens
+            
             return ChatLLMResponse(
                 content=response.choices[0].message.parsed,
-                usage=ChatLLMUsage(
-                    prompt_tokens=response.usage.prompt_tokens,
-                    completion_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens
-                )
+                usage=usage
             )
 
         if json_mode:
@@ -257,12 +319,15 @@ class ChatOpenAI(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": openai_messages,
-            "tools": openai_tools,
             "stream": True,
             "stream_options": {"include_usage": True},
             **self.kwargs
         }
-        if self.temperature is not None:
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
+        if self.temperature is not None and not self._is_reasoning_model():
             params["temperature"] = self.temperature
         
         if json_mode:
@@ -272,12 +337,21 @@ class ChatOpenAI(BaseChatLLM):
         
         for chunk in response:
             if not chunk.choices:
+                # Final chunk with usage
                 if chunk.usage:
-                    yield ChatLLMResponse(usage=ChatLLMUsage(
+                    usage = ChatLLMUsage(
                         prompt_tokens=chunk.usage.prompt_tokens,
                         completion_tokens=chunk.usage.completion_tokens,
                         total_tokens=chunk.usage.total_tokens
-                    ))
+                    )
+                    
+                    # Add reasoning tokens if present
+                    if hasattr(chunk.usage, 'completion_tokens_details') and chunk.usage.completion_tokens_details:
+                        reasoning_tokens = getattr(chunk.usage.completion_tokens_details, 'reasoning_tokens', None)
+                        if reasoning_tokens is not None and hasattr(usage, '__dict__'):
+                            usage.__dict__['reasoning_tokens'] = reasoning_tokens
+                    
+                    yield ChatLLMResponse(usage=usage)
                 continue
             
             delta = chunk.choices[0].delta
@@ -285,7 +359,8 @@ class ChatOpenAI(BaseChatLLM):
             if delta.content:
                 yield ChatLLMResponse(content=AIMessage(content=delta.content))
             
-            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+            # Handle reasoning content for o1 models
+            if self._is_reasoning_model() and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                 yield ChatLLMResponse(thinking=delta.reasoning_content)
 
     @overload
@@ -299,12 +374,15 @@ class ChatOpenAI(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": openai_messages,
-            "tools": openai_tools,
             "stream": True,
             "stream_options": {"include_usage": True},
             **self.kwargs
         }
-        if self.temperature is not None:
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
+        if self.temperature is not None and not self._is_reasoning_model():
             params["temperature"] = self.temperature
         
         if json_mode:
@@ -315,11 +393,18 @@ class ChatOpenAI(BaseChatLLM):
         async for chunk in response:
             if not chunk.choices:
                 if chunk.usage:
-                    yield ChatLLMResponse(usage=ChatLLMUsage(
+                    usage = ChatLLMUsage(
                         prompt_tokens=chunk.usage.prompt_tokens,
                         completion_tokens=chunk.usage.completion_tokens,
                         total_tokens=chunk.usage.total_tokens
-                    ))
+                    )
+                    
+                    if hasattr(chunk.usage, 'completion_tokens_details') and chunk.usage.completion_tokens_details:
+                        reasoning_tokens = getattr(chunk.usage.completion_tokens_details, 'reasoning_tokens', None)
+                        if reasoning_tokens is not None and hasattr(usage, '__dict__'):
+                            usage.__dict__['reasoning_tokens'] = reasoning_tokens
+                    
+                    yield ChatLLMResponse(usage=usage)
                 continue
             
             delta = chunk.choices[0].delta
@@ -327,13 +412,24 @@ class ChatOpenAI(BaseChatLLM):
             if delta.content:
                 yield ChatLLMResponse(content=AIMessage(content=delta.content))
             
-            if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
+            if self._is_reasoning_model() and hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                 yield ChatLLMResponse(thinking=delta.reasoning_content)
 
     def get_metadata(self) -> Metadata:
-        # Generic metadata, can be refined based on model name
+        # Determine context window based on model
+        context_window = 128000  # Default for GPT-4o and newer models
+        
+        if self._model.startswith("gpt-4-turbo"):
+            context_window = 128000
+        elif self._model.startswith("gpt-4"):
+            context_window = 8192
+        elif self._model.startswith("gpt-3.5-turbo"):
+            context_window = 16385
+        elif self._model.startswith("o1"):
+            context_window = 200000  # o1 models have larger context
+            
         return Metadata(
             name=self._model,
-            context_window=128000,
+            context_window=context_window,
             owned_by="openai"
         )

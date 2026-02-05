@@ -92,7 +92,7 @@ class ChatAzureOpenAI(BaseChatLLM):
                     })
                 openai_messages.append({"role": "user", "content": content_list})
             elif isinstance(msg, AIMessage):
-                openai_messages.append({"role": "assistant", "content": msg.content})
+                openai_messages.append({"role": "assistant", "content": msg.content or ""})
             elif isinstance(msg, ToolMessage):
                 # Reconstruct for history consistency
                 tool_call = {
@@ -155,7 +155,7 @@ class ChatAzureOpenAI(BaseChatLLM):
                 params=params
             )
         else:
-            content = AIMessage(content=message.content)
+            content = AIMessage(content=message.content or "")
             
         return ChatLLMResponse(
             content=content,
@@ -173,11 +173,33 @@ class ChatAzureOpenAI(BaseChatLLM):
         params = {
             "model": self._deployment,
             "messages": openai_messages,
-            "tools": openai_tools,
             **self.kwargs
         }
+        
+        # Only add tools if they exist
+        if openai_tools:
+            params["tools"] = openai_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
+        
+        if structured_output:
+            # Use beta parse endpoint for structured outputs
+            response = self.client.beta.chat.completions.parse(
+                **params,
+                response_format=structured_output
+            )
+            
+            usage = ChatLLMUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens
+            )
+            
+            return ChatLLMResponse(
+                content=response.choices[0].message.parsed,
+                usage=usage
+            )
         
         if json_mode:
             params["response_format"] = {"type": "json_object"}
@@ -196,11 +218,31 @@ class ChatAzureOpenAI(BaseChatLLM):
         params = {
             "model": self._deployment,
             "messages": openai_messages,
-            "tools": openai_tools,
             **self.kwargs
         }
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
+        
+        if structured_output:
+            response = await self.aclient.beta.chat.completions.parse(
+                **params,
+                response_format=structured_output
+            )
+            
+            usage = ChatLLMUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens
+            )
+            
+            return ChatLLMResponse(
+                content=response.choices[0].message.parsed,
+                usage=usage
+            )
         
         if json_mode:
             params["response_format"] = {"type": "json_object"}
@@ -219,17 +261,29 @@ class ChatAzureOpenAI(BaseChatLLM):
         params = {
             "model": self._deployment,
             "messages": openai_messages,
-            "tools": openai_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+        
         response = self.client.chat.completions.create(**params)
+        
         for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield ChatLLMResponse(content=AIMessage(content=chunk.choices[0].delta.content))
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
 
     @overload
     async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
@@ -242,17 +296,29 @@ class ChatAzureOpenAI(BaseChatLLM):
         params = {
             "model": self._deployment,
             "messages": openai_messages,
-            "tools": openai_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+        
         response = await self.aclient.chat.completions.create(**params)
+        
         async for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield ChatLLMResponse(content=AIMessage(content=chunk.choices[0].delta.content))
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
 
     def get_metadata(self) -> Metadata:
         return Metadata(

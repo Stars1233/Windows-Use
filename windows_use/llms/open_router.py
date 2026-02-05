@@ -15,6 +15,8 @@ class ChatOpenRouter(BaseChatLLM):
     """
     OpenRouter LLM implementation following the BaseChatLLM protocol.
     Uses OpenAI SDK with OpenRouter base URL.
+    
+    OpenRouter provides access to multiple LLM providers through a unified API.
     """
     
     def __init__(
@@ -25,6 +27,7 @@ class ChatOpenRouter(BaseChatLLM):
         timeout: float = 600.0,
         max_retries: int = 2,
         temperature: Optional[float] = None,
+        default_headers: Optional[dict] = None,
         **kwargs
     ):
         """
@@ -36,32 +39,29 @@ class ChatOpenRouter(BaseChatLLM):
             base_url (str): OpenRouter base URL.
             timeout (float): Request timeout.
             max_retries (int): Maximum retries.
-            temperature (float, optional): Sampling temperature.
+            temperature (float, optional): Sampling temperature..
             **kwargs: Additional arguments for chat completions.
         """
         self._model = model
         self.api_key = api_key or os.environ.get("OPENROUTER_API_KEY")
         self.temperature = temperature
         
+        # Build headers
+        headers = default_headers or {}
+        
         self.client = OpenAI(
             api_key=self.api_key,
             base_url=base_url,
             timeout=timeout,
             max_retries=max_retries,
-            default_headers={
-                "HTTP-Referer": "https://github.com/CursorTouch/Windows-Use", # Site URL
-                "X-Title": "Windows-Use", # Site Name
-            }
+            default_headers=headers
         )
         self.aclient = AsyncOpenAI(
             api_key=self.api_key,
             base_url=base_url,
             timeout=timeout,
             max_retries=max_retries,
-            default_headers={
-                "HTTP-Referer": "https://github.com/CursorTouch/Windows-Use",
-                "X-Title": "Windows-Use",
-            }
+            default_headers=headers
         )
         self.kwargs = kwargs
 
@@ -96,7 +96,7 @@ class ChatOpenRouter(BaseChatLLM):
                     })
                 openai_messages.append({"role": "user", "content": content_list})
             elif isinstance(msg, AIMessage):
-                openai_messages.append({"role": "assistant", "content": msg.content})
+                openai_messages.append({"role": "assistant", "content": msg.content or ""})
             elif isinstance(msg, ToolMessage):
                 # Reconstruct for history consistency
                 tool_call = {
@@ -139,10 +139,11 @@ class ChatOpenRouter(BaseChatLLM):
         message = choice.message
         usage_data = response.usage
         
+        # Safely extract usage data
         usage = ChatLLMUsage(
-            prompt_tokens=usage_data.prompt_tokens if hasattr(usage_data, 'prompt_tokens') else 0,
-            completion_tokens=usage_data.completion_tokens if hasattr(usage_data, 'completion_tokens') else 0,
-            total_tokens=usage_data.total_tokens if hasattr(usage_data, 'total_tokens') else 0
+            prompt_tokens=getattr(usage_data, 'prompt_tokens', 0),
+            completion_tokens=getattr(usage_data, 'completion_tokens', 0),
+            total_tokens=getattr(usage_data, 'total_tokens', 0)
         )
         
         content = None
@@ -151,6 +152,7 @@ class ChatOpenRouter(BaseChatLLM):
             try:
                 params = json.loads(tool_call.function.arguments)
             except json.JSONDecodeError:
+                logger.warning(f"Failed to parse tool arguments: {tool_call.function.arguments}")
                 params = {}
                 
             content = ToolMessage(
@@ -159,7 +161,7 @@ class ChatOpenRouter(BaseChatLLM):
                 params=params
             )
         else:
-            content = AIMessage(content=message.content)
+            content = AIMessage(content=message.content or "")
             
         return ChatLLMResponse(
             content=content,
@@ -177,16 +179,47 @@ class ChatOpenRouter(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": openai_messages,
-            "tools": openai_tools,
             **self.kwargs
         }
+        
+        # Only add tools if they exist
+        if openai_tools:
+            params["tools"] = openai_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
         if json_mode:
             params["response_format"] = {"type": "json_object"}
+        
+        # Note: OpenRouter doesn't support structured_output via beta.parse
+        if structured_output:
+            logger.warning("OpenRouter does not support structured_output via beta.parse. Using json_mode instead.")
+            params["response_format"] = {"type": "json_object"}
             
         response = self.client.chat.completions.create(**params)
+        
+        if structured_output:
+            # Try to parse the JSON response into the structured output
+            try:
+                content_text = response.choices[0].message.content
+                parsed_data = json.loads(content_text)
+                parsed_obj = structured_output(**parsed_data)
+                
+                usage = ChatLLMUsage(
+                    prompt_tokens=getattr(response.usage, 'prompt_tokens', 0),
+                    completion_tokens=getattr(response.usage, 'completion_tokens', 0),
+                    total_tokens=getattr(response.usage, 'total_tokens', 0)
+                )
+                
+                return ChatLLMResponse(
+                    content=parsed_obj,
+                    usage=usage
+                )
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                logger.error(f"Failed to parse structured output: {e}")
+                # Fall through to normal response processing
+        
         return self._process_response(response)
 
     @overload
@@ -200,16 +233,43 @@ class ChatOpenRouter(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": openai_messages,
-            "tools": openai_tools,
             **self.kwargs
         }
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
         if json_mode:
+            params["response_format"] = {"type": "json_object"}
+        
+        if structured_output:
+            logger.warning("OpenRouter does not support structured_output via beta.parse. Using json_mode instead.")
             params["response_format"] = {"type": "json_object"}
             
         response = await self.aclient.chat.completions.create(**params)
+        
+        if structured_output:
+            try:
+                content_text = response.choices[0].message.content
+                parsed_data = json.loads(content_text)
+                parsed_obj = structured_output(**parsed_data)
+                
+                usage = ChatLLMUsage(
+                    prompt_tokens=getattr(response.usage, 'prompt_tokens', 0),
+                    completion_tokens=getattr(response.usage, 'completion_tokens', 0),
+                    total_tokens=getattr(response.usage, 'total_tokens', 0)
+                )
+                
+                return ChatLLMResponse(
+                    content=parsed_obj,
+                    usage=usage
+                )
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                logger.error(f"Failed to parse structured output: {e}")
+        
         return self._process_response(response)
 
     @overload
@@ -223,17 +283,29 @@ class ChatOpenRouter(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": openai_messages,
-            "tools": openai_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+        
         response = self.client.chat.completions.create(**params)
+        
         for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield ChatLLMResponse(content=AIMessage(content=chunk.choices[0].delta.content))
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
 
     @overload
     async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
@@ -246,21 +318,33 @@ class ChatOpenRouter(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": openai_messages,
-            "tools": openai_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if openai_tools:
+            params["tools"] = openai_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+        
         response = await self.aclient.chat.completions.create(**params)
+        
         async for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield ChatLLMResponse(content=AIMessage(content=chunk.choices[0].delta.content))
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
 
     def get_metadata(self) -> Metadata:
         return Metadata(
             name=self._model,
-            context_window=128000,
+            context_window=128000,  # Varies by model, this is a safe default
             owned_by="open_router"
         )

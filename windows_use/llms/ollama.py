@@ -92,12 +92,11 @@ class ChatOllama(BaseChatLLM):
     def _convert_tools(self, tools: List[Tool]) -> List[dict]:
         """
         Convert Tool objects to Ollama-compatible tool definitions.
-        Ollama uses the same format as OpenAI tools but needs sanitization for some models.
         """
         return [
             {
                 "type": "function",
-                "function": self.sanitize_schema(tool.json_schema)
+                "function": tool.json_schema
             }
             for tool in tools
         ]
@@ -147,9 +146,13 @@ class ChatOllama(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": ollama_messages,
-            "tools": ollama_tools,
             **self.kwargs
         }
+        
+        # Only add tools if they exist
+        if ollama_tools:
+            params["tools"] = ollama_tools
+        
         if self.temperature is not None:
             if "options" not in params:
                 params["options"] = {}
@@ -161,16 +164,19 @@ class ChatOllama(BaseChatLLM):
         response = self.client.chat(**params)
         
         if structured_output:
-            import json
-            parsed = structured_output.model_validate_json(response["message"]["content"])
-            return ChatLLMResponse(
-                content=parsed,
-                usage=ChatLLMUsage(
-                    prompt_tokens=response.get("prompt_eval_count", 0),
-                    completion_tokens=response.get("eval_count", 0),
-                    total_tokens=response.get("prompt_eval_count", 0) + response.get("eval_count", 0)
+            try:
+                parsed = structured_output.model_validate_json(response["message"]["content"])
+                return ChatLLMResponse(
+                    content=parsed,
+                    usage=ChatLLMUsage(
+                        prompt_tokens=response.get("prompt_eval_count", 0),
+                        completion_tokens=response.get("eval_count", 0),
+                        total_tokens=response.get("prompt_eval_count", 0) + response.get("eval_count", 0)
+                    )
                 )
-            )
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse structured output: {e}")
+                # Fall through to normal response processing
 
         return self._process_response(response)
 
@@ -185,9 +191,12 @@ class ChatOllama(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": ollama_messages,
-            "tools": ollama_tools,
             **self.kwargs
         }
+        
+        if ollama_tools:
+            params["tools"] = ollama_tools
+        
         if self.temperature is not None:
             if "options" not in params:
                 params["options"] = {}
@@ -199,15 +208,18 @@ class ChatOllama(BaseChatLLM):
         response = await self.aclient.chat(**params)
         
         if structured_output:
-            parsed = structured_output.model_validate_json(response["message"]["content"])
-            return ChatLLMResponse(
-                content=parsed,
-                usage=ChatLLMUsage(
-                    prompt_tokens=response.get("prompt_eval_count", 0),
-                    completion_tokens=response.get("eval_count", 0),
-                    total_tokens=response.get("prompt_eval_count", 0) + response.get("eval_count", 0)
+            try:
+                parsed = structured_output.model_validate_json(response["message"]["content"])
+                return ChatLLMResponse(
+                    content=parsed,
+                    usage=ChatLLMUsage(
+                        prompt_tokens=response.get("prompt_eval_count", 0),
+                        completion_tokens=response.get("eval_count", 0),
+                        total_tokens=response.get("prompt_eval_count", 0) + response.get("eval_count", 0)
+                    )
                 )
-            )
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse structured output: {e}")
 
         return self._process_response(response)
 
@@ -222,10 +234,13 @@ class ChatOllama(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": ollama_messages,
-            "tools": ollama_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if ollama_tools:
+            params["tools"] = ollama_tools
+        
         if self.temperature is not None:
             if "options" not in params:
                 params["options"] = {}
@@ -238,7 +253,7 @@ class ChatOllama(BaseChatLLM):
         
         for chunk in response:
             message = chunk.get("message", {})
-            if "content" in message:
+            if "content" in message and message["content"]:
                 yield ChatLLMResponse(content=AIMessage(content=message["content"]))
 
     @overload
@@ -252,10 +267,13 @@ class ChatOllama(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": ollama_messages,
-            "tools": ollama_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if ollama_tools:
+            params["tools"] = ollama_tools
+        
         if self.temperature is not None:
             if "options" not in params:
                 params["options"] = {}
@@ -268,7 +286,7 @@ class ChatOllama(BaseChatLLM):
         
         async for chunk in response:
             message = chunk.get("message", {})
-            if "content" in message:
+            if "content" in message and message["content"]:
                 yield ChatLLMResponse(content=AIMessage(content=message["content"]))
 
     def get_metadata(self) -> Metadata:

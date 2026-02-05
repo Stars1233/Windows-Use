@@ -88,7 +88,7 @@ class ChatCerebras(BaseChatLLM):
                     })
                 cerebras_messages.append({"role": "user", "content": content_list})
             elif isinstance(msg, AIMessage):
-                cerebras_messages.append({"role": "assistant", "content": msg.content})
+                cerebras_messages.append({"role": "assistant", "content": msg.content or ""})
             elif isinstance(msg, ToolMessage):
                 # Reconstruct for history consistency
                 tool_call = {
@@ -151,7 +151,7 @@ class ChatCerebras(BaseChatLLM):
                 params=params
             )
         else:
-            content = AIMessage(content=message.content)
+            content = AIMessage(content=message.content or "")
             
         return ChatLLMResponse(
             content=content,
@@ -169,9 +169,13 @@ class ChatCerebras(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": cerebras_messages,
-            "tools": cerebras_tools,
             **self.kwargs
         }
+        
+        # Only add tools if they exist
+        if cerebras_tools:
+            params["tools"] = cerebras_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
@@ -181,15 +185,19 @@ class ChatCerebras(BaseChatLLM):
         response = self.client.chat.completions.create(**params)
         
         if structured_output:
-            parsed = structured_output.model_validate_json(response.choices[0].message.content)
-            return ChatLLMResponse(
-                content=parsed,
-                usage=ChatLLMUsage(
-                    prompt_tokens=response.usage.prompt_tokens,
-                    completion_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens
+            try:
+                parsed = structured_output.model_validate_json(response.choices[0].message.content)
+                return ChatLLMResponse(
+                    content=parsed,
+                    usage=ChatLLMUsage(
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                        total_tokens=response.usage.total_tokens
+                    )
                 )
-            )
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse structured output: {e}")
+                # Fall through to normal response processing
 
         return self._process_response(response)
 
@@ -204,9 +212,12 @@ class ChatCerebras(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": cerebras_messages,
-            "tools": cerebras_tools,
             **self.kwargs
         }
+        
+        if cerebras_tools:
+            params["tools"] = cerebras_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
@@ -214,6 +225,21 @@ class ChatCerebras(BaseChatLLM):
             params["response_format"] = {"type": "json_object"}
             
         response = await self.aclient.chat.completions.create(**params)
+        
+        if structured_output:
+            try:
+                parsed = structured_output.model_validate_json(response.choices[0].message.content)
+                return ChatLLMResponse(
+                    content=parsed,
+                    usage=ChatLLMUsage(
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                        total_tokens=response.usage.total_tokens
+                    )
+                )
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse structured output: {e}")
+        
         return self._process_response(response)
 
     @overload
@@ -227,17 +253,29 @@ class ChatCerebras(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": cerebras_messages,
-            "tools": cerebras_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if cerebras_tools:
+            params["tools"] = cerebras_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+        
         response = self.client.chat.completions.create(**params)
+        
         for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield ChatLLMResponse(content=AIMessage(content=chunk.choices[0].delta.content))
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
 
     @overload
     async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
@@ -250,17 +288,29 @@ class ChatCerebras(BaseChatLLM):
         params = {
             "model": self._model,
             "messages": cerebras_messages,
-            "tools": cerebras_tools,
             "stream": True,
             **self.kwargs
         }
+        
+        if cerebras_tools:
+            params["tools"] = cerebras_tools
+        
         if self.temperature is not None:
             params["temperature"] = self.temperature
         
+        if json_mode:
+            params["response_format"] = {"type": "json_object"}
+        
         response = await self.aclient.chat.completions.create(**params)
+        
         async for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield ChatLLMResponse(content=AIMessage(content=chunk.choices[0].delta.content))
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            if delta.content:
+                yield ChatLLMResponse(content=AIMessage(content=delta.content))
 
     def get_metadata(self) -> Metadata:
         return Metadata(

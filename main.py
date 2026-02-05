@@ -1,4 +1,4 @@
-from windows_use.llms.google import ChatGoogle
+# from windows_use.llms.google import ChatGoogle
 from windows_use.llms.anthropic import ChatAnthropic
 from windows_use.llms.ollama import ChatOllama
 from windows_use.llms.mistral import ChatMistral
@@ -12,13 +12,13 @@ import os
 load_dotenv()
 
 def main():
-    # llm=ChatMistral(reasoning_effort='none',model='magistral-small-latest',temperature=0.7)
-    # llm=ChatGoogle(reasoning_effort='low',model="gemini-3-flash-preview",thinking_budget=0, temperature=0.7)
-    # llm=ChatOpenRouter(reasoning_effort='none',model="nvidia/nemotron-3-nano-30b-a3b:free",temperature=0.2)
-    llm=ChatAnthropic(model="claude-haiku-4-5",thinking_budget=-1, temperature=0.2)
-    # llm=ChatOllama(model="qwen3-vl:4b",temperature=0.2)
-    # llm=ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct",temperature=0.7)
-    agent = Agent(mode='normal',llm=llm, browser=Browser.EDGE,use_accessibility=False, use_vision=False,use_annotation=False, auto_minimize=False)
+    # llm=ChatMistral(model='magistral-small-latest',temperature=0.7)
+    # llm=ChatGoogle(model="gemini-2.5-flash-lite",temperature=0.7) #Google wrapper is under developement
+    # llm=ChatOpenRouter(model="nvidia/nemotron-3-nano-30b-a3b:free",temperature=0.2)
+    # llm=ChatAnthropic(model="claude-haiku-4-5", temperature=0.2)
+    # llm=ChatOllama(model="qwen3-vl:4b")
+    # llm=ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct")
+    agent = Agent(mode='normal',llm=llm, use_vision=True, browser=Browser.EDGE,auto_minimize=False)
     agent.invoke(query=input("Enter a query: "))
 
 if __name__ == "__main__":
