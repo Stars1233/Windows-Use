@@ -53,8 +53,8 @@ class TestAgent:
         """Test Agent initialization."""
         agent = Agent(llm=mock_llm, instructions=["Test instruction"])
         assert agent.instructions == ["Test instruction"]
-        assert agent.max_steps == 25
-        assert agent.max_consecutive_failures == 3
+        assert agent.state.max_steps == 25
+        assert agent.state.max_consecutive_failures == 3
 
     @patch("windows_use.agent.service.Registry")
     @patch("windows_use.agent.service.WatchDog")

@@ -71,8 +71,6 @@ class Agent(BaseAgent):
         )
         self.instructions = instructions or []
         self.browser = browser
-        self.max_steps = max_steps
-        self.max_consecutive_failures = max_consecutive_failures
         self.auto_minimize = auto_minimize
         if use_annotation and not use_vision:
             logger.warning("use_vision is set to True if use_annotation is True.")
@@ -91,7 +89,6 @@ class Agent(BaseAgent):
         self.console = Console()
         self.prompt = Prompt()
         self.llm = llm
-        self.step = 0
 
     @property
     def system_message(self) -> SystemMessage:
@@ -99,7 +96,7 @@ class Agent(BaseAgent):
             mode=self.mode,
             desktop=self.desktop,
             browser=self.browser,
-            max_steps=self.max_steps,
+            max_steps=self.state.max_steps,
             instructions=self.instructions,
         )
         return SystemMessage(content=content)
@@ -134,12 +131,12 @@ class Agent(BaseAgent):
             ValueError: If the LLM returns an unexpected response type.
             Exception: If all retry attempts are exhausted.
         """
-        max_attempts = self.max_consecutive_failures
+        max_attempts = self.state.max_consecutive_failures
         last_error = None
 
         for attempt in range(max_attempts):
             try:
-                llm_response = self.llm.invoke(messages=self.state.messages, tools=self.tools)
+                llm_response = self.llm.invoke(messages=self.state.messages+self.state.error_messages, tools=self.tools)
                 content = llm_response.content
 
                 if content is None:
@@ -153,7 +150,7 @@ class Agent(BaseAgent):
                         f"LLM returned unexpected content type: {type(content).__name__}. "
                         f"Expected ToolMessage or AIMessage."
                     )
-
+                self.state.error_messages.clear()
                 return content
             except Exception as e:
                 last_error = e
@@ -195,14 +192,14 @@ class Agent(BaseAgent):
         self.state.messages.insert(0, self.system_message)
         consecutive_failures = 0
 
-        for step in range(self.max_steps):
+        for step in range(self.state.max_steps):
             self.state.step = step
             self.state.messages.append(self.state_message)
 
             try:
                 message = self.reason()
             except Exception as e:
-                logger.error(f"[Agent] Step {step + 1}/{self.max_steps} - Reason failed: {e}")
+                logger.error(f"[Agent] Step {step + 1}/{self.state.max_steps} - Reason failed: {e}")
                 return AgentResult(
                     is_done=False,
                     error=f"Agent failed after exhausting retries: {e}",
@@ -229,26 +226,32 @@ class Agent(BaseAgent):
                     )
 
                 tool_result = self.act(tool_name=tool_name, tool_params=tool_params)
-                content = tool_result.content if tool_result.is_success else tool_result.error
-                message.content = content
-                self.state.messages.append(message)
+                if tool_result.is_success:
+                    content = tool_result.content
+                    message.content = content
+                    self.state.messages.append(message)
+                else:
+                    content=tool_result.error
+                    message.content = content
+                    self.state.error_messages.append(message)
+                
 
                 # Track consecutive failures
                 if not tool_result.is_success:
                     consecutive_failures += 1
                     logger.warning(
                         f"[Agent] Tool '{tool_name}' failed "
-                        f"({consecutive_failures}/{self.max_consecutive_failures}): {content}"
+                        f"({consecutive_failures}/{self.state.max_consecutive_failures}): {content}"
                     )
-                    if consecutive_failures >= self.max_consecutive_failures:
+                    if consecutive_failures >= self.state.max_consecutive_failures:
                         logger.error(
-                            f"[Agent] Aborting: {self.max_consecutive_failures} "
+                            f"[Agent] Aborting: {self.state.max_consecutive_failures} "
                             f"consecutive tool failures reached."
                         )
                         return AgentResult(
                             is_done=False,
                             error=(
-                                f"Agent aborted after {self.max_consecutive_failures} "
+                                f"Agent aborted after {self.state.max_consecutive_failures} "
                                 f"consecutive tool failures. Last error: {content}"
                             ),
                         )
@@ -268,11 +271,11 @@ class Agent(BaseAgent):
                 return self.result(content=content, is_done=True)
 
         logger.warning(
-            f"[Agent] Max steps ({self.max_steps}) reached without completing the task."
+            f"[Agent] Max steps ({self.state.max_steps}) reached without completing the task."
         )
         return AgentResult(
             is_done=False,
-            error=f"Agent reached the maximum number of steps ({self.max_steps}) without completing.",
+            error=f"Agent reached the maximum number of steps ({self.state.max_steps}) without completing.",
         )
 
     def invoke(self, query: str) -> AgentResult:

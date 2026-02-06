@@ -70,17 +70,22 @@ class ChatGoogle(BaseChatLLM):
         """
         Convert BaseMessage objects to Google Gemini-compatible content list.
 
+        Gemini requires strict user/model role alternation. This method builds
+        the raw content list and then merges consecutive same-role entries so
+        that, e.g., a function_response (user) followed by an observation
+        HumanMessage (user) become a single user Content with combined parts.
+
         Returns:
             A tuple of (system_instruction, contents).
         """
-        contents: list[types.Content] = []
+        raw_contents: list[types.Content] = []
         system_instruction: Optional[str] = None
 
         for msg in messages:
             if isinstance(msg, SystemMessage):
                 system_instruction = msg.content
             elif isinstance(msg, HumanMessage):
-                contents.append(
+                raw_contents.append(
                     types.Content(
                         role="user",
                         parts=[types.Part.from_text(text=msg.content)],
@@ -96,7 +101,7 @@ class ChatGoogle(BaseChatLLM):
                     parts.append(
                         types.Part.from_bytes(data=img_bytes, mime_type=msg.mime_type)
                     )
-                contents.append(types.Content(role="user", parts=parts))
+                raw_contents.append(types.Content(role="user", parts=parts))
             elif isinstance(msg, AIMessage):
                 parts = []
                 if msg.thinking:
@@ -104,7 +109,7 @@ class ChatGoogle(BaseChatLLM):
                 if msg.content:
                     parts.append(types.Part.from_text(text=msg.content))
                 if parts:
-                    contents.append(types.Content(role="model", parts=parts))
+                    raw_contents.append(types.Content(role="model", parts=parts))
             elif isinstance(msg, ToolMessage):
                 # Model's function call (with optional thinking)
                 model_parts: list[types.Part] = []
@@ -113,10 +118,10 @@ class ChatGoogle(BaseChatLLM):
                 model_parts.append(
                     types.Part.from_function_call(name=msg.name, args=msg.params)
                 )
-                contents.append(types.Content(role="model", parts=model_parts))
+                raw_contents.append(types.Content(role="model", parts=model_parts))
 
                 # Function response
-                contents.append(
+                raw_contents.append(
                     types.Content(
                         role="user",
                         parts=[
@@ -128,7 +133,38 @@ class ChatGoogle(BaseChatLLM):
                     )
                 )
 
+        # Merge consecutive same-role contents to satisfy Gemini's strict
+        # user/model alternation requirement.
+        contents = self._merge_consecutive_contents(raw_contents)
         return system_instruction, contents
+
+    @staticmethod
+    def _merge_consecutive_contents(
+        contents: list[types.Content],
+    ) -> list[types.Content]:
+        """
+        Merge consecutive Content objects that share the same role.
+
+        Gemini requires strict role alternation (user → model → user → …).
+        After converting ToolMessage into a model turn (function_call) and a
+        user turn (function_response), the next HumanMessage also becomes a
+        user turn, creating back-to-back user entries. This helper collapses
+        them into a single Content with combined parts.
+        """
+        if not contents:
+            return contents
+
+        merged: list[types.Content] = [contents[0]]
+        for content in contents[1:]:
+            if content.role == merged[-1].role:
+                # Combine parts into the existing Content
+                merged[-1] = types.Content(
+                    role=content.role,
+                    parts=(merged[-1].parts or []) + (content.parts or []),
+                )
+            else:
+                merged.append(content)
+        return merged
 
     def _convert_tools(self, tools: List[Tool]) -> list[types.Tool]:
         """
