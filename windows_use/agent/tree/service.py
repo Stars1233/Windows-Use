@@ -244,7 +244,6 @@ class Tree:
             dom_interactive_nodes.append(TreeElementNode(**{
                 'name':node.Name.strip(),
                 'control_type':control_type,
-                'value': node.Name.strip(),
                 'bounding_box':bounding_box,
                 'center':center,
                 'window_name':window_name,
