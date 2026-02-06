@@ -1,5 +1,5 @@
 from windows_use.agent.tree.config import INTERACTIVE_CONTROL_TYPE_NAMES,DOCUMENT_CONTROL_TYPE_NAMES,INFORMATIVE_CONTROL_TYPE_NAMES, DEFAULT_ACTIONS, INTERACTIVE_ROLES, THREAD_MAX_RETRIES
-from windows_use.uia import Control,ComboBoxControl,EditControl,ScrollPattern,WindowControl,Rect,ExpandCollapseState,PatternId,PropertyId,AccessibleRoleNames,TreeScope,ControlFromHandle
+from windows_use.uia import Control,ComboBoxControl,ListControl,ListItemControl,EditControl,ScrollPattern,WindowControl,Rect,ExpandCollapseState,PatternId,PropertyId,AccessibleRoleNames,TreeScope,ControlFromHandle
 from windows_use.agent.tree.views import TreeElementNode, ScrollElementNode, TextElementNode, Center, BoundingBox, TreeState
 from windows_use.agent.tree.cache_utils import CacheRequestFactory,CachedControlHelper
 from windows_use.agent.tree.utils import random_point_within_bounding_box
@@ -310,21 +310,22 @@ class Tree:
             area = width * height
             
             # Is Visible Check
-            is_visible = (area > 0) and (not is_offscreen or control_type_name == 'EditControl') and is_control_element
+            is_visible = (area > 0) and (not is_offscreen or control_type_name in set(['EditControl','ListItemControl'])) and is_control_element
             
             if is_visible:
                 is_enabled = node.CachedIsEnabled
                 if is_enabled:
                     # Determine is_keyboard_focusable
-                    if control_type_name in set(['EditControl','ButtonControl','CheckBoxControl','RadioButtonControl','TabItemControl']):
-                         is_keyboard_focusable = True
+                    if control_type_name in set(['EditControl','ButtonControl','CheckBoxControl','RadioButtonControl','TabItemControl','ListItemControl']):
+                        is_keyboard_focusable = True
                     else:
-                         is_keyboard_focusable = node.CachedIsKeyboardFocusable
+                        #Experimentally, ListItemControl is keyboard focusable
+                        is_keyboard_focusable = node.CachedIsKeyboardFocusable
                     
                     # Interactive Check
                     if interactive_nodes is not None:
                         is_interactive = False
-                        if is_browser and control_type_name in set(['DataItemControl','ListItemControl']) and not is_keyboard_focusable:
+                        if is_browser and control_type_name in set(['DataItemControl']) and not is_keyboard_focusable:
                             is_interactive = False
                         elif not is_browser and control_type_name == "ImageControl" and is_keyboard_focusable:
                             is_interactive = True
