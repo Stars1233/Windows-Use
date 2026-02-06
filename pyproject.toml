@@ -46,6 +46,15 @@ dependencies = [
     "mistralai>=1.9.11",
     "pywin32>=311",
     "comtypes>=1.4.14",
+    "qrcode>=8.2",
+    "neonize>=0.3.14.post0",
+    "python-telegram-bot>=21.10",
+    "pysignalclirestapi>=0.3.24",
+    "httpx>=0.28.1",
+    "websockets>=15.0.1",
+    "discord-py>=2.6.4",
+    "slack-bolt>=1.27.0",
+    "pynacl>=1.6.2",
 ]
 
 [project.optional-dependencies]
