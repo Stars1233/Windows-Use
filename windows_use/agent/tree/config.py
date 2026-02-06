@@ -70,7 +70,9 @@ DEFAULT_ACTIONS=set([
     'Jump',
     'Check',
     'Uncheck',
-    'Double Click'
+    'Double Click',
+    'Expand',
+    'Collapse'
 ])
 
 THREAD_MAX_RETRIES = 3

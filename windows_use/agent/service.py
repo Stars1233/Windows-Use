@@ -1,6 +1,5 @@
 from windows_use.messages import SystemMessage, HumanMessage, AIMessage, ImageMessage, ToolMessage
 from windows_use.agent.tools import BUILTIN_TOOLS, EXPERIMENTAL_TOOLS
-from windows_use.telemetry.views import AgentTelemetryEvent
 from windows_use.agent.views import AgentResult, AgentState
 from windows_use.telemetry.service import ProductTelemetry
 from windows_use.agent.registry.service import Registry
@@ -11,9 +10,7 @@ from windows_use.agent.desktop.views import Browser
 from windows_use.agent.prompt.service import Prompt
 from windows_use.llms.base import BaseChatLLM
 from windows_use.agent.base import BaseAgent
-from windows_use.uia import Control
 from contextlib import nullcontext
-from rich.markdown import Markdown
 from rich.console import Console
 from typing import Literal
 import logging
@@ -82,7 +79,8 @@ class Agent(BaseAgent):
             use_accessibility=True if use_annotation else use_accessibility,
         )
         self.state = AgentState(
-            max_steps=max_steps, max_consecutive_failures=max_consecutive_failures
+            max_consecutive_failures=max_consecutive_failures,
+            max_steps=max_steps,
         )
         self.telemetry = ProductTelemetry()
         self.watchdog = WatchDog()
@@ -268,6 +266,7 @@ class Agent(BaseAgent):
             if isinstance(message, AIMessage):
                 self.state.messages.append(message)
                 content = message.content
+                logger.info(f"[Agent] 📝 Final Answer: {content}")
                 return self.result(content=content, is_done=True)
 
         logger.warning(

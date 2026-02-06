@@ -1,16 +1,15 @@
-from windows_use.uia import Control,EditControl,ImageControl,ScrollPattern,WindowControl,Rect,GetRootControl,PatternId,AccessibleRoleNames,PaneControl,GroupControl,StructureChangeType,TreeScope,ControlFromHandle
 from windows_use.agent.tree.config import INTERACTIVE_CONTROL_TYPE_NAMES,DOCUMENT_CONTROL_TYPE_NAMES,INFORMATIVE_CONTROL_TYPE_NAMES, DEFAULT_ACTIONS, INTERACTIVE_ROLES, THREAD_MAX_RETRIES
+from windows_use.uia import Control,ComboBoxControl,EditControl,ScrollPattern,WindowControl,Rect,ExpandCollapseState,PatternId,PropertyId,AccessibleRoleNames,TreeScope,ControlFromHandle
 from windows_use.agent.tree.views import TreeElementNode, ScrollElementNode, TextElementNode, Center, BoundingBox, TreeState
 from windows_use.agent.tree.cache_utils import CacheRequestFactory,CachedControlHelper
 from windows_use.agent.tree.utils import random_point_within_bounding_box
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING,Optional,Any
 from time import sleep,perf_counter
-import threading
 import logging
-import random
 import weakref
 import comtypes
+import ctypes
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -51,25 +50,23 @@ class Tree:
             bounding_box=self.screen_box,
             center=self.screen_box.get_center(),
             window_name="Desktop",
-            xpath='',
-            value='',
-            shortcut='',
-            is_focused=False
+            metadata={}
         )
         if self.dom:
             scroll_pattern:ScrollPattern=self.dom.GetCachedPattern(PatternId.ScrollPattern, True)
+            metadata={
+                'horizontal_scrollable':scroll_pattern.HorizontallyScrollable,
+                'horizontal_scroll_percent':round(scroll_pattern.HorizontalScrollPercent,2) if scroll_pattern.HorizontallyScrollable else 0,
+                'vertical_scrollable':scroll_pattern.VerticallyScrollable,
+                'vertical_scroll_percent':round(scroll_pattern.VerticalScrollPercent,2) if scroll_pattern.VerticallyScrollable else 0,
+            }
             dom_node=ScrollElementNode(
                 name="DOM",
                 control_type="DocumentControl",
                 bounding_box=self.dom_bounding_box,
                 center=self.dom_bounding_box.get_center(),
-                horizontal_scrollable=scroll_pattern.HorizontallyScrollable if scroll_pattern else False,
-                horizontal_scroll_percent=round(scroll_pattern.HorizontalScrollPercent,2) if scroll_pattern and scroll_pattern.HorizontallyScrollable else 0,
-                vertical_scrollable=scroll_pattern.VerticallyScrollable if scroll_pattern else False,
-                vertical_scroll_percent=round(scroll_pattern.VerticalScrollPercent,2) if scroll_pattern and scroll_pattern.VerticallyScrollable else 0,
-                xpath='',
                 window_name="DOM",
-                is_focused=False
+                metadata=metadata
             )
         else:
             dom_node=None
@@ -201,43 +198,57 @@ class Tree:
                     return None
                 if child.ControlTypeName!='TextControl':
                     return None
-                legacy_pattern=node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
-                value=legacy_pattern.Value
+                metadata:dict[str,Any]={}
                 element_bounding_box = node.BoundingRectangle
                 bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
                 center = bounding_box.get_center()
-                is_focused=node.HasKeyboardFocus
+                has_focused=node.HasKeyboardFocus
+                accelerator_key=node.AcceleratorKey
+                metadata['has_focused']=has_focused
+                if accelerator_key:
+                    metadata['shortcut']=accelerator_key
+
+                if isinstance(node,EditControl):
+                    try:
+                        value = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleValueProperty)
+                        metadata['value']=value.strip() if value else '(empty)'
+                    except Exception:
+                        pass
+                    
+                    try:
+                        help_text = getattr(node,'HelpText',None)
+                        if help_text:
+                            metadata['help_text']=help_text.encode('ascii', 'ignore').decode('ascii')
+                    except Exception:
+                        pass
+
                 dom_interactive_nodes.append(TreeElementNode(**{
                     'name':child.Name.strip(),
                     'control_type':node.LocalizedControlType,
-                    'value':value,
-                    'shortcut':node.AcceleratorKey,
                     'bounding_box':bounding_box,
-                    'xpath':'',
                     'center':center,
                     'window_name':window_name,
-                    'is_focused':is_focused
+                    'metadata':metadata
                 }))
         elif self.element_has_child_element(node,'link','heading'):
             dom_interactive_nodes.pop()
             node=node.GetFirstChildControl()
             control_type='link'
-            legacy_pattern=node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
-            value=legacy_pattern.Value
+            value = node.GetPropertyValue(PropertyId.LegacyIAccessibleValueProperty) or ''
             element_bounding_box = node.BoundingRectangle
             bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
             center = bounding_box.get_center()
             is_focused=node.HasKeyboardFocus
+            metadata:dict[str,Any]={}
+            metadata['has_focused']=is_focused
             dom_interactive_nodes.append(TreeElementNode(**{
                 'name':node.Name.strip(),
                 'control_type':control_type,
                 'value': node.Name.strip(),
-                'shortcut':node.AcceleratorKey,
                 'bounding_box':bounding_box,
-                'xpath':'',
                 'center':center,
                 'window_name':window_name,
-                'is_focused':is_focused
+                'metadata':metadata
             }))
 
     def tree_traversal(self, node: Control, window_bounding_box:Rect, window_name:str, is_browser:bool, 
@@ -253,7 +264,7 @@ class Tree:
             # Checks to skip the nodes that are not interactive
             is_offscreen = node.CachedIsOffscreen
             control_type_name = node.CachedControlTypeName
-            class_name = node.CachedClassName
+            # class_name = node.CachedClassName
             
             # Scrollable check
             if scrollable_nodes is not None:
@@ -267,7 +278,8 @@ class Tree:
                             name = node.CachedName
                             automation_id = node.CachedAutomationId
                             localized_control_type = node.CachedLocalizedControlType
-                            has_keyboard_focus = node.CachedHasKeyboardFocus
+                            metadata:dict[str,Any]={}
+                            metadata['has_focused']=node.CachedHasKeyboardFocus
                             scrollable_nodes.append(ScrollElementNode(**{
                                 'name':name.strip() or automation_id or localized_control_type.capitalize() or "''",
                                 'control_type':localized_control_type.title(),
@@ -280,13 +292,12 @@ class Tree:
                                     'height':box.height()
                                 }),
                                 'center':center,
-                                'xpath':'',
                                 'horizontal_scrollable':scroll_pattern.HorizontallyScrollable,
                                 'horizontal_scroll_percent':round(scroll_pattern.HorizontalScrollPercent,2) if scroll_pattern.HorizontallyScrollable else 0,
                                 'vertical_scrollable':scroll_pattern.VerticallyScrollable,
                                 'vertical_scroll_percent':round(scroll_pattern.VerticalScrollPercent,2) if scroll_pattern.VerticallyScrollable else 0,
                                 'window_name':window_name,
-                                'is_focused':has_keyboard_focus
+                                'metadata':metadata
                             }))
                     except Exception:
                         pass
@@ -321,8 +332,8 @@ class Tree:
                         elif control_type_name in (INTERACTIVE_CONTROL_TYPE_NAMES|DOCUMENT_CONTROL_TYPE_NAMES):
                              # Role check
                              try:
-                                legacy_pattern = node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
-                                is_role_interactive = AccessibleRoleNames.get(legacy_pattern.Role, "Default") in INTERACTIVE_ROLES
+                                role = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleRoleProperty)
+                                is_role_interactive = AccessibleRoleNames.get(role, "Default") in INTERACTIVE_ROLES
                              except Exception:
                                 is_role_interactive = False
                              
@@ -339,42 +350,107 @@ class Tree:
                         elif control_type_name == 'GroupControl':
                              if is_browser:
                                  try:
-                                    legacy_pattern = node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
-                                    is_role_interactive = AccessibleRoleNames.get(legacy_pattern.Role, "Default") in INTERACTIVE_ROLES
+                                    role = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleRoleProperty)
+                                    is_role_interactive = AccessibleRoleNames.get(role, "Default") in INTERACTIVE_ROLES
                                  except Exception:
                                     is_role_interactive = False
                                     
                                  is_default_action = False
                                  try:
-                                     legacy_pattern = node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
-                                     if legacy_pattern.DefaultAction.title() in DEFAULT_ACTIONS:
+                                     default_action = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleDefaultActionProperty)
+                                     if default_action and default_action.title() in DEFAULT_ACTIONS:
                                          is_default_action = True
-                                 except: pass
+                                 except Exception:
+                                    pass
                                  
                                  if is_role_interactive and (is_default_action or is_keyboard_focusable):
                                      is_interactive = True
 
                         if is_interactive:
-                            legacy_pattern=node.GetCachedPattern(PatternId.LegacyIAccessiblePattern, True)
-                            value=legacy_pattern.Value.strip() if legacy_pattern.Value is not None else ""
                             is_focused = node.CachedHasKeyboardFocus
                             name = node.CachedName.strip()
                             localized_control_type = node.CachedLocalizedControlType
-                            accelerator_key = node.CachedAcceleratorKey
+                            accelerator_key = node.AcceleratorKey
+
+                            metadata:dict[str,Any]={}
+                            metadata['has_focused']=is_focused
+                            if accelerator_key:
+                                metadata['shortcut']=accelerator_key
                             
+                            try:
+                                help_text = getattr(node,'HelpText',None)
+                                if help_text:
+                                    metadata['help_text']=help_text.encode('ascii', 'ignore').decode('ascii')
+                            except Exception:
+                                pass
+
+                            if isinstance(node,EditControl):
+                                try:
+                                    value = node.GetCachedPropertyValue(PropertyId.LegacyIAccessibleValueProperty)
+                                    metadata['value']=value.strip() if value else '(empty)'
+                                except Exception:
+                                    pass
+
+                                try:
+                                    if node.CachedIsPassword:
+                                        metadata['is_password']=True
+                                except Exception:
+                                    pass
+                            
+                            if isinstance(node,ComboBoxControl):
+                                try:
+                                    control_state=node.GetCachedPropertyValue(PropertyId.ExpandCollapseExpandCollapseStateProperty)
+                                    match control_state:
+                                        case ExpandCollapseState.Expanded:
+                                            metadata['expand_collapse_state']='expanded'
+                                        case ExpandCollapseState.Collapsed:
+                                            metadata['expand_collapse_state']='collapsed'
+                                        case ExpandCollapseState.PartiallyExpanded:
+                                            metadata['expand_collapse_state']='partially expanded'
+                                        case ExpandCollapseState.LeafNode:
+                                            metadata['expand_collapse_state']='leaf node'
+                                        case _:
+                                            metadata['expand_collapse_state']='unknown'
+                                except Exception:
+                                    pass
+
+                                try: 
+                                    can_select_multiple=node.GetCachedPropertyValue(PropertyId.SelectionCanSelectMultipleProperty)
+                                    metadata['is_selection_required']=can_select_multiple
+                                except Exception:
+                                    pass
+
+                                try:
+                                    is_selection_required=node.GetCachedPropertyValue(PropertyId.SelectionIsSelectionRequiredProperty)
+                                    metadata['is_selection_required']=is_selection_required
+                                except Exception:
+                                    pass
+
+                                try:
+                                    is_selected=node.GetCachedPropertyValue(PropertyId.SelectionItemIsSelectedProperty)
+                                    metadata['is_selected']=is_selected
+                                except Exception:
+                                    pass
+
+                                try:
+                                    selection_raw = node.GetCachedPropertyValue(PropertyId.SelectionSelectionProperty)
+                                    selected_items = Control.CreateControlsFromRawElementArray(selection_raw)
+                                    selected_names = [item.Name for item in selected_items if item.Name]
+                                    if selected_names:
+                                        metadata['selection'] = selected_names
+                                except Exception:
+                                    pass
+
                             if is_browser and is_dom:
                                 bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
                                 center = bounding_box.get_center()
                                 tree_node=TreeElementNode(**{
                                     'name':name,
                                     'control_type':localized_control_type.title(),
-                                    'value':value,
-                                    'shortcut':accelerator_key,
                                     'bounding_box':bounding_box,
                                     'center':center,
-                                    'xpath':'',
                                     'window_name':window_name,
-                                    'is_focused':is_focused
+                                    'metadata':metadata
                                 })
                                 dom_interactive_nodes.append(tree_node)
                                 self._dom_correction(node, dom_interactive_nodes, window_name)
@@ -384,13 +460,10 @@ class Tree:
                                 tree_node=TreeElementNode(**{
                                     'name':name,
                                     'control_type':localized_control_type.title(),
-                                    'value':value,
-                                    'shortcut':accelerator_key,
                                     'bounding_box':bounding_box,
                                     'center':center,
-                                    'xpath':'',
                                     'window_name':window_name,
-                                    'is_focused':is_focused
+                                    'metadata':metadata
                                 })
                                 interactive_nodes.append(tree_node)
 
@@ -520,7 +593,7 @@ class Tree:
         finally:
             comtypes.CoUninitialize()
 
-    def on_focus_change(self, sender:'ctypes.POINTER(IUIAutomationElement)'):
+    def on_focus_change(self, sender:ctypes.POINTER('IUIAutomationElement')):
         """Handle focus change events."""
         # Debounce duplicate events
         current_time = perf_counter()

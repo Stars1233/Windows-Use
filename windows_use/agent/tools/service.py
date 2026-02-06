@@ -307,6 +307,6 @@ def desktop_tool(action: Literal['create', 'remove', 'rename', 'switch'], deskto
                 vdm_switch(desktop_name)
                 return f"Switched to desktop '{desktop_name}'"
             case _:
-                return f"Unknown action: {action}"
+                return f"Error: Unknown action: {action}"
     except Exception as e:
         return f"Error executing desktop action '{action}': {str(e)}"

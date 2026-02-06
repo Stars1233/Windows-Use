@@ -1,6 +1,9 @@
 from dataclasses import dataclass,field
-from tabulate import tabulate
-from typing import Optional
+from typing import TYPE_CHECKING, Optional,Any
+import json
+
+if TYPE_CHECKING:
+    from windows_use.uia.core import Rect
 
 @dataclass
 class TreeState:
@@ -15,10 +18,10 @@ class TreeState:
             return "No interactive elements found"
         # TOON-like format: Pipe-separated values with clear header
         # Using abbreviations in header to save tokens
-        header = "# id|window|control_type|name|coords|value|focus"
+        header = "# id|window|control_type|name|coords|metadata"
         rows = [header]
         for idx, node in enumerate(self.interactive_nodes):
-            row = f"{idx}|{node.window_name}|{node.control_type}|{node.name}|{node.center.to_string()}|{node.value}|{node.is_focused}"
+            row = f"{idx}|{node.window_name}|{node.control_type}|{node.name}|{node.center.to_string()}|{json.dumps(node.metadata)}"
             rows.append(row)
         return "\n".join(rows)
 
@@ -26,13 +29,12 @@ class TreeState:
         if not self.scrollable_nodes:
             return "No scrollable elements found"
         # TOON-like format
-        header = "# id|window|control_type|name|coords|h_scroll|h_pct|v_scroll|v_pct|focus"
+        header = "# id|window|control_type|name|coords|metadata"
         rows = [header]
         base_index = len(self.interactive_nodes)
         for idx, node in enumerate(self.scrollable_nodes):
             row = (f"{base_index + idx}|{node.window_name}|{node.control_type}|{node.name}|"
-                   f"{node.center.to_string()}|{node.horizontal_scrollable}|{node.horizontal_scroll_percent}|"
-                   f"{node.vertical_scrollable}|{node.vertical_scroll_percent}|{node.is_focused}")
+                   f"{node.center.to_string()}|{json.dumps(node.metadata)}")
             rows.append(row)
         return "\n".join(rows)
     
@@ -46,7 +48,7 @@ class BoundingBox:
     height:int
 
     @classmethod
-    def from_bounding_rectangle(cls,bounding_rectangle:'BoundingRectangle')->'BoundingBox':
+    def from_bounding_rectangle(cls,bounding_rectangle:'Rect')->'BoundingBox':
         return cls(
             left=bounding_rectangle.left,
             top=bounding_rectangle.top,
@@ -86,11 +88,7 @@ class TreeElementNode:
     name: str=''
     control_type: str=''
     window_name: str=''
-    value:str=''
-    shortcut: str=''
-    xpath:str=''
-    is_focused:bool=False
-    value:str=''
+    metadata:dict[str,Any]=field(default_factory=dict)
 
     def update_from_node(self,node:'TreeElementNode'):
         self.name=node.name
@@ -100,8 +98,7 @@ class TreeElementNode:
         self.shortcut=node.shortcut
         self.bounding_box=node.bounding_box
         self.center=node.center
-        self.xpath=node.xpath
-        self.is_focused=node.is_focused
+        self.metadata=node.metadata
 
     # Legacy method kept for compatibility if needed, but not used in new format
     def to_row(self, index: int):
@@ -111,15 +108,10 @@ class TreeElementNode:
 class ScrollElementNode:
     name: str
     control_type: str
-    xpath:str
     window_name: str
     bounding_box: BoundingBox
     center: Center
-    horizontal_scrollable: bool
-    horizontal_scroll_percent: float
-    vertical_scrollable: bool
-    vertical_scroll_percent: float
-    is_focused: bool
+    metadata:dict[str,Any]=field(default_factory=dict)
 
     # Legacy method kept for compatibility
     def to_row(self, index: int, base_index: int):
@@ -129,11 +121,7 @@ class ScrollElementNode:
             self.control_type,
             self.name,
             self.center.to_string(),
-            self.horizontal_scrollable,
-            self.horizontal_scroll_percent,
-            self.vertical_scrollable,
-            self.vertical_scroll_percent,
-            self.is_focused
+            json.dumps(self.metadata)
         ]
 
 @dataclass

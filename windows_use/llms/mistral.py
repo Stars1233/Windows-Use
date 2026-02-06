@@ -115,6 +115,43 @@ class ChatMistral(BaseChatLLM):
             for tool in tools
         ]
 
+    def _extract_content(self, raw_content: Any) -> tuple[str, str | None]:
+        """
+        Extract text content and thinking from Mistral response content.
+
+        Magistral (thinking) models return content as a list of TextChunk and
+        ThinkChunk objects instead of a plain string. This method normalizes
+        both formats into a (text, thinking) tuple.
+
+        Args:
+            raw_content: The message content from the Mistral API response.
+
+        Returns:
+            A tuple of (text_content, thinking_content). thinking_content is
+            None when there is no thinking output.
+        """
+        if isinstance(raw_content, str):
+            return raw_content, None
+        if not isinstance(raw_content, list):
+            return str(raw_content) if raw_content else "", None
+
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+
+        for chunk in raw_content:
+            chunk_type = getattr(chunk, "type", None)
+            if chunk_type == "text":
+                text_parts.append(chunk.text)
+            elif chunk_type == "thinking":
+                # ThinkChunk.thinking is a list of TextChunk/ReferenceChunk
+                for inner in getattr(chunk, "thinking", []):
+                    if hasattr(inner, "text"):
+                        thinking_parts.append(inner.text)
+
+        text = "".join(text_parts)
+        thinking = "".join(thinking_parts) if thinking_parts else None
+        return text, thinking
+
     def _process_response(self, response: Any) -> ChatLLMResponse:
         """
         Process Mistral API response into ChatLLMResponse object.
@@ -150,7 +187,8 @@ class ChatMistral(BaseChatLLM):
                 params=params
             )
         else:
-            content = AIMessage(content=message.content or "")
+            text, thinking = self._extract_content(message.content)
+            content = AIMessage(content=text or "", thinking=thinking)
             
         return ChatLLMResponse(
             content=content,
@@ -186,7 +224,7 @@ class ChatMistral(BaseChatLLM):
         if structured_output:
             try:
                 # Parse JSON response into structured output
-                content_text = response.choices[0].message.content
+                content_text, _ = self._extract_content(response.choices[0].message.content)
                 if content_text:
                     parsed = structured_output.model_validate_json(content_text)
                 else:
@@ -233,7 +271,7 @@ class ChatMistral(BaseChatLLM):
         
         if structured_output:
             try:
-                content_text = response.choices[0].message.content
+                content_text, _ = self._extract_content(response.choices[0].message.content)
                 if content_text:
                     parsed = structured_output.model_validate_json(content_text)
                 else:
@@ -281,7 +319,11 @@ class ChatMistral(BaseChatLLM):
             if hasattr(chunk, 'data') and hasattr(chunk.data, 'choices') and chunk.data.choices:
                 delta = chunk.data.choices[0].delta
                 if hasattr(delta, 'content') and delta.content:
-                    yield ChatLLMResponse(content=AIMessage(content=delta.content))
+                    text, thinking = self._extract_content(delta.content)
+                    if text:
+                        yield ChatLLMResponse(
+                            content=AIMessage(content=text, thinking=thinking)
+                        )
 
     @overload
     async def astream(self, messages: list[BaseMessage], tools: list[Tool] = [], structured_output: BaseModel | None = None, json_mode: bool = False) -> AsyncIterator[ChatLLMResponse]:
@@ -312,7 +354,11 @@ class ChatMistral(BaseChatLLM):
             if hasattr(chunk, 'data') and hasattr(chunk.data, 'choices') and chunk.data.choices:
                 delta = chunk.data.choices[0].delta
                 if hasattr(delta, 'content') and delta.content:
-                    yield ChatLLMResponse(content=AIMessage(content=delta.content))
+                    text, thinking = self._extract_content(delta.content)
+                    if text:
+                        yield ChatLLMResponse(
+                            content=AIMessage(content=text, thinking=thinking)
+                        )
 
     def get_metadata(self) -> Metadata:
         # Context windows vary by model

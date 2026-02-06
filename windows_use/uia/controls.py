@@ -1,4 +1,4 @@
-﻿'''
+'''
 uiautomation for Python 3.
 Author: yinkaisheng
 Source: https://github.com/yinkaisheng/Python-UIAutomation-for-Windows
@@ -157,6 +157,34 @@ class Control():
             else:
                 Logger.WriteLine("element.CurrentControlType returns {}, invalid ControlType!".format(controlType), ConsoleColor.Red)  # rarely happens
         return None
+
+    @staticmethod
+    def CreateControlsFromRawElementArray(raw_pointer) -> List['Control']:
+        """
+        Convert a raw POINTER(IUnknown) to a list of Control subclasses.
+        
+        Cached property values like SelectionSelectionProperty return a raw
+        IUnknown COM pointer (an IUIAutomationElementArray). This method
+        handles the QueryInterface call and element extraction.
+        
+        raw_pointer: POINTER(IUnknown) from GetCachedPropertyValue or GetPropertyValue.
+        Return List[Control], a list of Control subclasses. Empty list if conversion fails.
+        """
+        if not raw_pointer:
+            return []
+        try:
+            ele_array = raw_pointer.QueryInterface(
+                _AutomationClient.instance().UIAutomationCore.IUIAutomationElementArray
+            )
+            controls = []
+            for i in range(ele_array.Length):
+                ele = ele_array.GetElement(i)
+                con = Control.CreateControlFromElement(element=ele)
+                if con:
+                    controls.append(con)
+            return controls
+        except Exception:
+            return []
 
     @staticmethod
     def CreateControlFromControl(control: 'Control') -> Optional['Control']:

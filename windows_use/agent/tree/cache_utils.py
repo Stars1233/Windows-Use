@@ -47,6 +47,7 @@ class CacheRequestFactory:
         cache_request.AddProperty(PropertyId.IsControlElementProperty)
         cache_request.AddProperty(PropertyId.HasKeyboardFocusProperty)
         cache_request.AddProperty(PropertyId.IsKeyboardFocusableProperty)
+        cache_request.AddProperty(PropertyId.IsPasswordProperty)
         
         # Layout properties
         cache_request.AddProperty(PropertyId.BoundingRectangleProperty)
@@ -67,6 +68,18 @@ class CacheRequestFactory:
         cache_request.AddProperty(PropertyId.ScrollVerticallyScrollableProperty)
         cache_request.AddProperty(PropertyId.ScrollHorizontalScrollPercentProperty)
         cache_request.AddProperty(PropertyId.ScrollVerticalScrollPercentProperty)
+
+        # ExpandCollapse properties
+        cache_request.AddProperty(PropertyId.ExpandCollapseExpandCollapseStateProperty)
+
+        # Selection properties
+        cache_request.AddProperty(PropertyId.SelectionCanSelectMultipleProperty)
+        cache_request.AddProperty(PropertyId.SelectionIsSelectionRequiredProperty)
+        cache_request.AddProperty(PropertyId.SelectionSelectionProperty)
+
+        # SelectionItem properties
+        cache_request.AddProperty(PropertyId.SelectionItemIsSelectedProperty)
+        cache_request.AddProperty(PropertyId.SelectionItemSelectionContainerProperty)
 
         # Window properties
         cache_request.AddProperty(PropertyId.WindowIsModalProperty)
