@@ -2,11 +2,15 @@ from dataclasses import dataclass,field
 from typing import TYPE_CHECKING, Optional,Any
 import json
 
+WARNING_MESSAGE="The desktop UI services are temporarily unavailable. Please wait a few seconds and continue."
+EMPTY_MESSAGE="No elements found"
+
 if TYPE_CHECKING:
     from windows_use.uia.core import Rect
 
 @dataclass
 class TreeState:
+    status:bool=True
     root_node:Optional['TreeElementNode']=None
     dom_node:Optional['ScrollElementNode']=None
     interactive_nodes:list['TreeElementNode']|None=field(default_factory=list)
@@ -14,8 +18,13 @@ class TreeState:
     dom_informative_nodes:list['TextElementNode']|None=field(default_factory=list)
 
     def interactive_elements_to_string(self) -> str:
-        if not self.interactive_nodes:
-            return "No interactive elements found"
+        parts = []
+        if not self.status:
+            parts.append(WARNING_MESSAGE)
+            return "\n".join(parts)
+        if not self.interactive_nodes and self.status:
+            parts.append(EMPTY_MESSAGE)
+            return "\n".join(parts)
         # TOON-like format: Pipe-separated values with clear header
         # Using abbreviations in header to save tokens
         header = "# id|window|control_type|name|coords|metadata"
@@ -23,11 +32,17 @@ class TreeState:
         for idx, node in enumerate(self.interactive_nodes):
             row = f"{idx}|{node.window_name}|{node.control_type}|{node.name}|{node.center.to_string()}|{json.dumps(node.metadata)}"
             rows.append(row)
-        return "\n".join(rows)
+        parts.append("\n".join(rows))
+        return "\n".join(parts)
 
     def scrollable_elements_to_string(self) -> str:
-        if not self.scrollable_nodes:
-            return "No scrollable elements found"
+        parts = []
+        if not self.status:
+            parts.append(WARNING_MESSAGE)
+            return "\n".join(parts)
+        if not self.scrollable_nodes and self.status:
+            parts.append(EMPTY_MESSAGE)
+            return "\n".join(parts)
         # TOON-like format
         header = "# id|window|control_type|name|coords|metadata"
         rows = [header]
@@ -36,7 +51,8 @@ class TreeState:
             row = (f"{base_index + idx}|{node.window_name}|{node.control_type}|{node.name}|"
                    f"{node.center.to_string()}|{json.dumps(node.metadata)}")
             rows.append(row)
-        return "\n".join(rows)
+        parts.append("\n".join(rows))
+        return "\n".join(parts)
     
 @dataclass
 class BoundingBox:

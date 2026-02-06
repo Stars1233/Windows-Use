@@ -43,7 +43,7 @@ class Tree:
         else:
             windows_handles=other_windows_handles
         
-        interactive_nodes,scrollable_nodes,dom_informative_nodes=self.get_window_wise_nodes(windows_handles=windows_handles,active_window_flag=active_window_flag)
+        interactive_nodes,scrollable_nodes,dom_informative_nodes,failed_handles=self.get_window_wise_nodes(windows_handles=windows_handles,active_window_flag=active_window_flag)
         root_node=TreeElementNode(
             name="Desktop",
             control_type="PaneControl",
@@ -70,13 +70,17 @@ class Tree:
             )
         else:
             dom_node=None
-        self.tree_state=TreeState(root_node=root_node,dom_node=dom_node,interactive_nodes=interactive_nodes,scrollable_nodes=scrollable_nodes,dom_informative_nodes=dom_informative_nodes)
+        # Detect if tree capture failed for any windows
+        status = len(failed_handles) == 0
+        if not status:
+            logger.warning(f"[Tree] {len(failed_handles)} window(s) failed to capture — UI services may be loading")
         end_time = perf_counter()
         logger.info(f"[Tree] Tree State capture took {end_time - start_time:.2f} seconds")
-        return self.tree_state
+        return TreeState(status=status,root_node=root_node,dom_node=dom_node,interactive_nodes=interactive_nodes,scrollable_nodes=scrollable_nodes,dom_informative_nodes=dom_informative_nodes)
 
-    def get_window_wise_nodes(self,windows_handles:list[int],active_window_flag:bool) -> tuple[list[TreeElementNode],list[ScrollElementNode],list[TextElementNode]]:
+    def get_window_wise_nodes(self,windows_handles:list[int],active_window_flag:bool) -> tuple[list[TreeElementNode],list[ScrollElementNode],list[TextElementNode],list[int]]:
         interactive_nodes, scrollable_nodes, dom_informative_nodes = [], [], []
+        failed_handles = []
         
         # Pre-calculate browser status in main thread to pass simple types to workers
         task_inputs = []
@@ -127,7 +131,8 @@ class Tree:
                             future_to_handle[new_future] = handle
                         else:
                             logger.error(f"Task failed completely for handle {handle} after {THREAD_MAX_RETRIES} retries")
-        return interactive_nodes,scrollable_nodes,dom_informative_nodes
+                            failed_handles.append(handle)
+        return interactive_nodes,scrollable_nodes,dom_informative_nodes,failed_handles
     
     def iou_bounding_box(self,window_box: Rect,element_box: Rect,) -> BoundingBox:
         # Step 1: Intersection of element and window (existing logic)
