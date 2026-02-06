@@ -18,3 +18,4 @@ __pycache__
 .memories
 .agent
 experiments/
+logs

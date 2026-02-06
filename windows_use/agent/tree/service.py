@@ -53,21 +53,25 @@ class Tree:
             metadata={}
         )
         if self.dom:
-            scroll_pattern:ScrollPattern=self.dom.GetCachedPattern(PatternId.ScrollPattern, True)
-            metadata={
-                'horizontal_scrollable':scroll_pattern.HorizontallyScrollable,
-                'horizontal_scroll_percent':round(scroll_pattern.HorizontalScrollPercent,2) if scroll_pattern.HorizontallyScrollable else 0,
-                'vertical_scrollable':scroll_pattern.VerticallyScrollable,
-                'vertical_scroll_percent':round(scroll_pattern.VerticalScrollPercent,2) if scroll_pattern.VerticallyScrollable else 0,
-            }
-            dom_node=ScrollElementNode(
-                name="DOM",
-                control_type="DocumentControl",
-                bounding_box=self.dom_bounding_box,
-                center=self.dom_bounding_box.get_center(),
-                window_name="DOM",
-                metadata=metadata
-            )
+            try:
+                scroll_pattern:ScrollPattern=self.dom.GetCachedPattern(PatternId.ScrollPattern, True)
+                metadata={
+                    'horizontal_scrollable':scroll_pattern.HorizontallyScrollable if scroll_pattern else False,
+                    'horizontal_scroll_percent':round(scroll_pattern.HorizontalScrollPercent,2) if scroll_pattern and scroll_pattern.HorizontallyScrollable else 0,
+                    'vertical_scrollable':scroll_pattern.VerticallyScrollable if scroll_pattern else False,
+                    'vertical_scroll_percent':round(scroll_pattern.VerticalScrollPercent,2) if scroll_pattern and scroll_pattern.VerticallyScrollable else 0,
+                }
+                dom_node=ScrollElementNode(**{
+                    'name':'DOM',
+                    'control_type':'DocumentControl',
+                    'bounding_box':self.dom_bounding_box,
+                    'center':self.dom_bounding_box.get_center(),
+                    'window_name':'DOM',
+                    'metadata':metadata
+                })
+            except Exception as e:
+                logger.debug(f"Failed to get DOM scroll pattern: {e}")
+                dom_node=None
         else:
             dom_node=None
         # Detect if tree capture failed for any windows
@@ -172,17 +176,19 @@ class Tree:
 
 
     def element_has_child_element(self, node:Control,control_type:str,child_control_type:str):
-        if node.LocalizedControlType==control_type:
+        # node is cached — use cached property
+        if node.CachedLocalizedControlType==control_type:
             first_child=node.GetFirstChildControl()
             if first_child is None:
                 return False
+            # first_child from GetFirstChildControl() is NOT cached — use live access
             return first_child.LocalizedControlType==child_control_type
 
     def _dom_correction(self, node:Control, dom_interactive_nodes:list[TreeElementNode], window_name:str):
         if self.element_has_child_element(node,'list item','link') or self.element_has_child_element(node,'item','link'):
             dom_interactive_nodes.pop()
             return None
-        elif node.ControlTypeName=='GroupControl':
+        elif node.CachedControlTypeName=='GroupControl':
             dom_interactive_nodes.pop()
             # Inlined is_keyboard_focusable logic for correction
             control_type_name_check = node.CachedControlTypeName
@@ -196,6 +202,7 @@ class Tree:
                 child=node
                 try:
                     while child.GetFirstChildControl() is not None:
+                        # Children from GetFirstChildControl() are NOT cached — use live access
                         if child.ControlTypeName in INTERACTIVE_CONTROL_TYPE_NAMES:
                             return None
                         child=child.GetFirstChildControl()
@@ -204,11 +211,12 @@ class Tree:
                 if child.ControlTypeName!='TextControl':
                     return None
                 metadata:dict[str,Any]={}
-                element_bounding_box = node.BoundingRectangle
+                # node is cached — use cached properties
+                element_bounding_box = node.CachedBoundingRectangle
                 bounding_box=self.iou_bounding_box(self.dom_bounding_box,element_bounding_box)
                 center = bounding_box.get_center()
-                has_focused=node.HasKeyboardFocus
-                accelerator_key=node.AcceleratorKey
+                has_focused=node.CachedHasKeyboardFocus
+                accelerator_key=node.CachedAcceleratorKey
                 metadata['has_focused']=has_focused
                 if accelerator_key:
                     metadata['shortcut']=accelerator_key
@@ -229,7 +237,7 @@ class Tree:
 
                 dom_interactive_nodes.append(TreeElementNode(**{
                     'name':child.Name.strip(),
-                    'control_type':node.LocalizedControlType,
+                    'control_type':node.CachedLocalizedControlType,
                     'bounding_box':bounding_box,
                     'center':center,
                     'window_name':window_name,
@@ -237,6 +245,7 @@ class Tree:
                 }))
         elif self.element_has_child_element(node,'link','heading'):
             dom_interactive_nodes.pop()
+            # child from GetFirstChildControl() is NOT cached — use live access
             node=node.GetFirstChildControl()
             control_type='link'
             value = node.GetPropertyValue(PropertyId.LegacyIAccessibleValueProperty) or ''

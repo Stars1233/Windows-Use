@@ -12,7 +12,9 @@ from windows_use.llms.base import BaseChatLLM
 from windows_use.agent.base import BaseAgent
 from contextlib import nullcontext
 from rich.console import Console
+from datetime import datetime
 from typing import Literal
+from pathlib import Path
 import logging
 import time
 
@@ -22,6 +24,18 @@ handler = logging.StreamHandler()
 formatter = logging.Formatter('[%(levelname)s] %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+def _create_file_logger() -> logging.FileHandler:
+    """Create a per-run file handler that logs to logs/<timestamp>.log"""
+    logs_dir = Path(__file__).resolve().parents[2] / "logs"
+    logs_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_file = logs_dir / f"{timestamp}.log"
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
+    file_handler.setFormatter(file_formatter)
+    return file_handler
 
 
 class Agent(BaseAgent):
@@ -37,6 +51,7 @@ class Agent(BaseAgent):
         max_steps: int = 25,
         use_vision: bool = False,
         auto_minimize: bool = False,
+        log_to_file:bool = False,
         experimental: bool = False,
     ):
         """Initialize the Agent.
@@ -86,6 +101,7 @@ class Agent(BaseAgent):
         self.watchdog = WatchDog()
         self.console = Console()
         self.prompt = Prompt()
+        self.log_to_file = log_to_file 
         self.llm = llm
 
     @property
@@ -279,8 +295,26 @@ class Agent(BaseAgent):
 
     def invoke(self, query: str) -> AgentResult:
         self.state.task = query
-        with self.desktop.auto_minimize() if self.auto_minimize else nullcontext():
-            self.watchdog.set_focus_callback(self.desktop.tree.on_focus_change)
-            with self.watchdog:
-                result = self.loop()
-        return result
+        # Create a per-run file logger for the chain of thought
+        file_handler = _create_file_logger() if self.log_to_file else None
+        if file_handler:
+            logger.addHandler(file_handler)
+        result = None
+        logger.info(f"[Agent] 🔍 Query: {query}")
+        try:
+            with self.desktop.auto_minimize() if self.auto_minimize else nullcontext():
+                self.watchdog.set_focus_callback(self.desktop.tree.on_focus_change)
+                with self.watchdog:
+                    result = self.loop()
+            if result.is_done:
+                logger.info(f"[Agent] Task completed successfully")
+            else:
+                logger.warning(f"[Agent] Task ended with error: {result.error}")
+        except Exception as e:
+            logger.error(f"[Agent] Unhandled exception: {e}", exc_info=True)
+            raise
+        finally:
+            if file_handler:
+                logger.removeHandler(file_handler)
+                file_handler.close()
+            return result
