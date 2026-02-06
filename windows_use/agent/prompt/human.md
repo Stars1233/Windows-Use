@@ -31,3 +31,5 @@
 [Begin of User Query]
     {query}
 [End of User Query]
+
+REMINDER: You MUST use `done_tool` to deliver any response to the user. Do not produce a text-only reply.

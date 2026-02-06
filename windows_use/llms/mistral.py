@@ -76,7 +76,7 @@ class ChatMistral(BaseChatLLM):
                 for b64 in b64_imgs:
                     content.append({
                         "type": "image_url",
-                        "image_url": f"data:{msg.mime_type};base64,{b64}"
+                        "image_url": {"url": f"data:{msg.mime_type};base64,{b64}"},
                     })
                 mistral_messages.append({"role": "user", "content": content})
             elif isinstance(msg, AIMessage):

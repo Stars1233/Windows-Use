@@ -11,25 +11,26 @@ memory_path=Path.cwd()/'.memories'
 @Tool('done_tool',model=Done)
 def done_tool(answer:str,**kwargs):
     '''
-    Signals task completion and provides the final answer to the user.
-    
-    Use this tool when you have successfully completed the requested task and have 
-    a comprehensive answer ready. The answer should be well-formatted in markdown 
-    and include all relevant information the user requested.
+    Delivers a response to the user. This is the ONLY way to communicate with the user.
+
+    MUST be called for every type of response:
+    - Task completion: summarize what was accomplished
+    - Answers to questions: provide the requested information
+    - Conversational replies: greetings, clarifications, explanations
+    - Error reports: explain what failed and why
+
+    The answer should be formatted in clean markdown.
     '''
     return answer
 
 @Tool('app_tool',model=App)
 def app_tool(mode:Literal['launch','resize','switch']='launch',name:Optional[str]=None,loc:Optional[list[int]]=None,size:Optional[list[int]]=None,**kwargs)->str:
     '''
-    Manages Windows applications through launch, resize, and window switching operations.
-    
-    Modes:
-        - launch: Opens an application from the Windows Start Menu by name
-        - resize: Adjusts the active application window's size and position
-        - switch: Brings a specific application window into focus
-    
-    Use this tool to control application lifecycle and window management during task execution.
+    Manages application windows: launch new apps, switch between open windows, or resize/reposition the active window.
+
+    - launch: Opens an application via the Start Menu. Provide the app name as it appears in Start Menu.
+    - switch: Brings an already-open window to the foreground. Provide the window title from the Window Info list.
+    - resize: Moves and resizes the currently active window. Provide loc=[x,y] for position and size=[w,h] for dimensions.
     '''
     desktop:_Desktop=kwargs['desktop']
     return desktop.app(mode,name,loc,size)
@@ -40,29 +41,15 @@ def memory_tool(mode: Literal['view','read','write','delete','update'],path: Opt
     old_str: Optional[str] = None,new_str: Optional[str] = None,line_number: Optional[int] = None,
     read_range: Optional[list[int]] = None,**kwargs) -> str:
     '''
-    Persistent file-based storage system for managing information across different task stages.
-    
-    Use this tool to:
-        - Store important findings and data as md files in the .memories directory
-        - Maintain context across complex multi-step operations
-        - Track progress of plans and accumulate knowledge during task execution
-        - Cache information that may be referenced in future steps
-    
-    Modes:
-        - write: Create a new memory file (returns assigned path)
-        - view: List all directories and memory files in the .memories directory
-        - read: Retrieve contents of a specific memory file by path
-            * read_range: Optional (start, end) tuple to read specific line range (0-indexed, end exclusive)
-        - update: Modify contents of an existing memory file by path
-            Operations:
-            * replace: Replace old_str with new_str (requires old_str and new_str)
-            * insert: Insert content at line_number (requires line_number and content)
-        - delete: Remove a memory file by path
-    
-    All data is persisted as files in the .memories directory, ensuring information
-    survives across sessions and can be shared between different task stages.
-    
-    Essential for tasks requiring information persistence and cross-stage data sharing.
+    Persistent file-based storage for saving and retrieving information across steps. Files are stored as markdown in the .memories directory.
+
+    - view: List all stored memory files.
+    - write: Create a new file. Requires path and content.
+    - read: Retrieve file contents. Optionally use read_range=[start, end] for partial reads.
+    - update: Modify an existing file. Use operation='replace' with old_str/new_str, or operation='insert' with line_number/content.
+    - delete: Remove a file by path.
+
+    Use for storing intermediate results, research findings, plans, or any data needed in later steps.
     '''
     match mode:
         case 'view':
@@ -147,16 +134,9 @@ def memory_tool(mode: Literal['view','read','write','delete','update'],path: Opt
 @Tool('shell_tool',model=Shell)
 def shell_tool(command: str,timeout:int=10,**kwargs) -> str:
     '''
-    Executes PowerShell commands and returns output with status codes.
-    
-    Use this tool to:
-        - Run Windows system commands and scripts
-        - Query system information and configurations
-        - Automate file operations and system tasks
-        - Access Windows management utilities
-    
-    The working directory is set to the user's HOME directory by default. 
-    Returns both command output and exit status code for error handling.
+    Executes a PowerShell command and returns the output and exit status code. Working directory is the user's HOME.
+
+    Use for file operations, system queries, installations, running scripts, and any task better done via command line than GUI. Check the status code in the response: 0 means success, non-zero means failure.
     '''
     desktop:_Desktop=kwargs['desktop']
     response,status=desktop.execute_command(command,timeout=timeout)
@@ -165,16 +145,14 @@ def shell_tool(command: str,timeout:int=10,**kwargs) -> str:
 @Tool('click_tool',model=Click)
 def click_tool(loc:Optional[list[int]]=None,button:Literal['left','right','middle']='left',clicks:int=1,**kwargs)->str:
     '''
-    Performs mouse click operations on UI elements at specified coordinates.
-    
-    Click patterns:
-        - Single left click: Select elements, focus input fields
-        - Double left click: Open apps, folders, files
-        - Single right click: Open context menus
-        - Middle click: Browser-specific actions
-    
-    Automatically detects UI elements under cursor and adjusts click behavior 
-    for reliable interaction. Essential for all point-and-click UI operations.
+    Clicks at the specified pixel coordinates on screen.
+
+    - Single left click (clicks=1): Select elements, press buttons, focus fields, follow links.
+    - Double left click (clicks=2): Open files, folders, and desktop icons.
+    - Right click (button='right'): Open context menus.
+    - Hover only (clicks=0): Move cursor to location without clicking.
+
+    Use coordinates from the Interactive Elements list in the Desktop State.
     '''
     x,y=loc
     desktop:_Desktop=kwargs['desktop']
@@ -185,16 +163,13 @@ def click_tool(loc:Optional[list[int]]=None,button:Literal['left','right','middl
 @Tool('type_tool',model=Type)
 def type_tool(loc:Optional[list[int]]=None,text:str='',clear:Literal['true','false']='false',caret_position:Literal['start','idle','end']='idle',press_enter:Literal['true','false']='false',**kwargs):
     '''
-    Types text into input fields, text areas, and focused UI elements.
-    
-    Features:
-        - Click target element and input text automatically
-        - Clear existing content before typing (clear='true')
-        - Position caret at start, end, or leave idle
-        - Optionally press Enter after typing
-    
-    Use for form filling, search queries, text editing, and any text input operation.
-    The tool automatically clicks the target element coordinates to ensure focus before typing.
+    Clicks an input field and types text into it. Do NOT pre-click with click_tool — this tool handles focusing automatically.
+
+    - Set clear=true to replace existing text, or clear=false to append.
+    - Set press_enter=true to submit after typing (search bars, forms, dialogs).
+    - Set caret_position to control where typing begins relative to existing text.
+
+    Use for search queries, form fields, text editors, address bars, and any text input.
     '''
     x,y=loc
     desktop:_Desktop=kwargs['desktop']
@@ -204,19 +179,11 @@ def type_tool(loc:Optional[list[int]]=None,text:str='',clear:Literal['true','fal
 @Tool('scroll_tool',model=Scroll)
 def scroll_tool(loc:Optional[list[int]]=None,type:Literal['horizontal','vertical']='vertical',direction:Literal['up','down','left','right']='down',wheel_times:int=1,**kwargs)->str:
     '''
-    Scrolls content vertically or horizontally at specified or current cursor location.
-    
-    Use cases:
-        - Navigate through long webpages and documents
-        - Browse lists, tables, and scrollable containers
-        - Access off-screen content in any scrollable area
-    
-    Parameters:
-        - wheel_times: Controls scroll distance (1 wheel ≈ 3-5 lines of text)
-        - direction: Scroll direction: 'up'/'down' for vertical, 'left'/'right' for horizontal
-        - loc: Target coordinates (if None, scrolls at current cursor position)
-    
-    Essential tool for accessing content beyond the visible viewport.
+    Scrolls content at the specified location or at the current cursor position.
+
+    Each wheel increment scrolls roughly 3-5 lines of text. Use wheel_times=3-5 for moderate scrolling, 10+ for large jumps.
+
+    Check scroll percentages in the Scrollable Elements list to gauge position before scrolling. If loc is omitted, scrolling occurs at the current cursor location.
     '''
     desktop:_Desktop=kwargs['desktop']
     response=desktop.scroll(loc,type,direction,wheel_times)
@@ -227,15 +194,10 @@ def scroll_tool(loc:Optional[list[int]]=None,type:Literal['horizontal','vertical
 @Tool('move_tool',model=Move)
 def move_tool(loc:list[int],drag:bool=False,**kwargs)->str:
     '''
-    Moves mouse cursor to specific coordinates, optionally performing a drag operation.
-    
-    Use cases:
-        - Hover over elements to reveal tooltips (drag=False)
-        - Reposition cursor without clicking (drag=False)
-        - Drag and drop items from current position (drag=True)
-        - Move files/windows by dragging (drag=True)
-    
-    If drag is True, simulates holding the mouse button from start to end.
+    Moves the mouse cursor to a target location, or drags from the current position to the target.
+
+    - drag=false: Hover over elements to reveal tooltips, dropdown menus, or reposition the cursor.
+    - drag=true: Hold left mouse button from the current cursor position and drag to the target coordinates. Use for drag-and-drop of files, window resizing, slider adjustment, or reordering items.
     '''
     x,y=loc
     desktop:_Desktop=kwargs['desktop']
@@ -249,16 +211,11 @@ def move_tool(loc:list[int],drag:bool=False,**kwargs)->str:
 @Tool('shortcut_tool',model=Shortcut)
 def shortcut_tool(shortcut:str,**kwargs)->str:
     '''
-    Executes keyboard shortcuts for rapid command execution and navigation.
-    
-    Supports:
-        - Single keys: 'enter', 'escape', 'tab', 'delete'
-        - Key combinations: 'ctrl+c', 'alt+tab', 'ctrl+shift+n'
-        - Multiple keys separated by '+' for simultaneous press
-    
-    Use for common operations like copy/paste, window switching, menu access, 
-    and application-specific shortcuts. More efficient than mouse-based navigation 
-    for many operations.
+    Presses a keyboard shortcut. Use '+' to combine keys (e.g., 'ctrl+c').
+
+    Common shortcuts: ctrl+c (copy), ctrl+v (paste), ctrl+z (undo), ctrl+s (save), ctrl+a (select all), ctrl+f (find), ctrl+w (close tab), ctrl+t (new tab), alt+tab (switch window), alt+f4 (close app), enter (confirm), escape (cancel), win (start menu).
+
+    Prefer shortcuts over mouse interactions when the operation is unambiguous.
     '''
     desktop:_Desktop=kwargs['desktop']
     desktop.shortcut(shortcut)
@@ -267,14 +224,9 @@ def shortcut_tool(shortcut:str,**kwargs)->str:
 @Tool('multi_select_tool',model=MultiSelect)
 def multi_select_tool(press_ctrl:Literal['true','false']='true',elements:list[list[int]]=[],**kwargs)->str:
     '''
-    Selects mutiple items such as files, folders, or checkboxes if press_ctrl is true and perform redundant clicks if press_ctrl is false.
+    Clicks multiple locations in sequence. With press_ctrl=true, holds Ctrl to accumulate a multi-selection (e.g., selecting multiple files, checkboxes, or list items). With press_ctrl=false, clicks each location independently in order.
 
-    Use cases:
-        - Select multiple items in files, folders, or checkboxes
-        - Mark multiple checkboxes in a form
-        - Repeat clicks on same element
-    
-    Use for common operations like selecting multiple items or repeated clicks.
+    Provide a list of [x, y] coordinates. Each is clicked once in the order given.
     '''
     desktop:_Desktop=kwargs['desktop']
     desktop.multi_select(press_ctrl,elements)
@@ -284,14 +236,9 @@ def multi_select_tool(press_ctrl:Literal['true','false']='true',elements:list[li
 @Tool('multi_edit_tool',model=MultiEdit)
 def multi_edit_tool(elements:list[list],**kwargs)->str:
     '''
-    Typing text into multiple input fields.
-    
-    Use cases:
-        - Enter text into multiple text boxes
-        - Fill in forms with multiple fields
-        - Edit multiple lines of text
-    
-    Typing text into multiple input fields, text areas.
+    Types text into multiple input fields in one action. Each entry is [x, y, text]: the tool clicks the location and types the text, then moves to the next entry.
+
+    Use for filling out forms with multiple fields (name, email, address) or editing several text inputs at once. More efficient than calling type_tool repeatedly.
     '''
     desktop:_Desktop=kwargs['desktop']
     desktop.multi_edit(elements)
@@ -301,16 +248,7 @@ def multi_edit_tool(elements:list[list],**kwargs)->str:
 @Tool('wait_tool',model=Wait)
 def wait_tool(duration:int,**kwargs)->str:
     '''
-    Pauses execution for a specified duration to allow processes to complete.
-    
-    Essential for:
-        - Waiting for applications to launch and initialize
-        - Allowing webpages and content to fully load
-        - Giving animations and transitions time to complete
-        - Ensuring system operations finish before proceeding
-    
-    Use strategic waits to improve reliability when operations need time to complete.
-    Duration is specified in seconds.
+    Pauses for the specified number of seconds before the next action. Use to wait for applications to launch, pages to load, dialogs to appear, or animations to finish. Typical waits: 2-3s for UI transitions, 5s for app launches, 10s+ for installations or downloads.
     '''
     sleep(duration)
     return f'Waited for {duration} seconds.'
@@ -318,18 +256,11 @@ def wait_tool(duration:int,**kwargs)->str:
 @Tool('scrape_tool',model=Scrape)
 def scrape_tool(url:str,**kwargs)->str:
     '''
-    Fetches webpage content and converts it to clean markdown format for analysis.
-    
-    Use cases:
-        - Extract text content from webpages for processing
-        - Gather information from online sources
-        - Convert HTML pages to structured, readable text
-        - Access web data without browser automation
-    
-    Requires full URL including protocol (http:// or https://).
-    NOTE: This tool reads the visual accessibility tree (what is currently rendered on screen),
-    not the raw HTML source code. It captures visible text content accurately.
-    Returns structured text suitable for parsing, analysis, and information extraction.
+    Extracts visible text content from the webpage currently displayed in the browser and returns it as markdown.
+
+    This reads the rendered page content via the accessibility tree — not the raw HTML. Provide the URL of the page currently open in the browser. The output includes scroll position indicators so you know if there is more content above or below.
+
+    Use when you need to read, analyze, or extract information from a webpage.
     '''
     desktop:_Desktop=kwargs['desktop']
     desktop_state=desktop.desktop_state
@@ -347,19 +278,14 @@ def scrape_tool(url:str,**kwargs)->str:
 @Tool('desktop_tool', model=Desktop)
 def desktop_tool(action: Literal['create', 'remove', 'rename', 'switch'], desktop_name: Optional[str] = None, new_name: Optional[str] = None, **kwargs) -> str:
     '''
-    Manages Windows virtual desktops.
-    
-    Actions:
-        - create: Create a new virtual desktop (optional: provide desktop_name)
-        - remove: Remove a virtual desktop by name
-        - rename: Rename a virtual desktop (desktop_name -> new_name)
-        - switch: Switch to a virtual desktop by name
-    
-    Use this tool to organize workspaces and manage virtual desktops programmatically.
+    Manages Windows virtual desktops for workspace organization.
+
+    - create: Creates a new virtual desktop. Optionally provide a name via desktop_name.
+    - remove: Deletes the desktop specified by desktop_name. Ensure no needed windows remain on it.
+    - rename: Renames desktop_name to new_name.
+    - switch: Activates the desktop specified by desktop_name. Verify success in the next Desktop State.
     '''
-    try:
-        from windows_use.vdm.core import get_all_desktops
-        
+    try:        
         match action:
             case 'create':
                 # create_desktop(name) returns the name

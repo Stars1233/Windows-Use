@@ -4,13 +4,14 @@ from windows_use.messages import BaseMessage
 from pydantic import BaseModel
 from windows_use.tool import Tool
 
+
 @runtime_checkable
 class BaseChatLLM(Protocol):
 
     def sanitize_schema(self, tool_schema: dict) -> dict:
-        """
-        Convert full JSON schema into a minimal function schema.
-        Keeps only: name, description, and simplified parameters (type, enum).
+        """Convert full JSON schema into a minimal function schema.
+
+        Keeps only: name, description, and simplified parameters (type, enum, description).
         """
         params = tool_schema.get("parameters", {})
         properties = params.get("properties", {})
@@ -22,13 +23,22 @@ class BaseChatLLM(Protocol):
             if isinstance(prop, dict):
                 t = prop.get("type", "string")
                 enum_vals = prop.get("enum")
+                description = prop.get("description")
             else:
                 t = "string"
                 enum_vals = None
+                description = None
 
             # Normalize to valid JSON schema types
             if t not in {"string", "integer", "number", "boolean", "array", "object"}:
                 t = "string"
+
+            entry: dict = {"type": t}
+            if enum_vals is not None:
+                entry["enum"] = enum_vals
+            if description is not None:
+                entry["description"] = description
+            clean_props[name] = entry
 
         return {
             "name": tool_schema.get("name"),
@@ -36,8 +46,8 @@ class BaseChatLLM(Protocol):
             "parameters": {
                 "type": "object",
                 "properties": clean_props,
-                "required": required
-            }
+                "required": required,
+            },
         }
 
     @property

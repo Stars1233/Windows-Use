@@ -15,10 +15,10 @@ class TreeState:
             return "No interactive elements found"
         # TOON-like format: Pipe-separated values with clear header
         # Using abbreviations in header to save tokens
-        header = "# id|window|control_type|name|coords|focus"
+        header = "# id|window|control_type|name|coords|value|focus"
         rows = [header]
         for idx, node in enumerate(self.interactive_nodes):
-            row = f"{idx}|{node.window_name}|{node.control_type}|{node.name}|{node.center.to_string()}|{node.is_focused}"
+            row = f"{idx}|{node.window_name}|{node.control_type}|{node.name}|{node.center.to_string()}|{node.value}|{node.is_focused}"
             rows.append(row)
         return "\n".join(rows)
 
@@ -90,6 +90,7 @@ class TreeElementNode:
     shortcut: str=''
     xpath:str=''
     is_focused:bool=False
+    value:str=''
 
     def update_from_node(self,node:'TreeElementNode'):
         self.name=node.name

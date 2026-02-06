@@ -152,21 +152,22 @@ class ChatOpenAI(BaseChatLLM):
         message = choice.message
         usage_data = response.usage
         
+        # Capture reasoning tokens if available (o1 models)
+        reasoning_tokens = None
+        if hasattr(usage_data, "completion_tokens_details") and usage_data.completion_tokens_details:
+            reasoning_tokens = getattr(
+                usage_data.completion_tokens_details, "reasoning_tokens", None
+            )
+            if reasoning_tokens is not None:
+                logger.debug(f"Reasoning tokens used: {reasoning_tokens}")
+
         # Build usage object
         usage = ChatLLMUsage(
             prompt_tokens=usage_data.prompt_tokens,
             completion_tokens=usage_data.completion_tokens,
-            total_tokens=usage_data.total_tokens
+            total_tokens=usage_data.total_tokens,
+            reasoning_tokens=reasoning_tokens,
         )
-        
-        # Capture reasoning tokens if available (o1 models)
-        if hasattr(usage_data, 'completion_tokens_details') and usage_data.completion_tokens_details:
-            reasoning_tokens = getattr(usage_data.completion_tokens_details, 'reasoning_tokens', None)
-            if reasoning_tokens is not None:
-                # Add as extra attribute
-                if hasattr(usage, '__dict__'):
-                    usage.__dict__['reasoning_tokens'] = reasoning_tokens
-                    logger.debug(f"Reasoning tokens used: {reasoning_tokens}")
         
         # Extract thinking/reasoning content (for o1 models)
         thinking = None
@@ -233,25 +234,25 @@ class ChatOpenAI(BaseChatLLM):
             # Use beta parse endpoint for structured outputs
             response = self.client.beta.chat.completions.parse(
                 **params,
-                response_format=structured_output
+                response_format=structured_output,
             )
-            
-            # Build usage
+
+            reasoning_tokens = None
+            if hasattr(response.usage, "completion_tokens_details") and response.usage.completion_tokens_details:
+                reasoning_tokens = getattr(
+                    response.usage.completion_tokens_details, "reasoning_tokens", None
+                )
+
             usage = ChatLLMUsage(
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens
+                total_tokens=response.usage.total_tokens,
+                reasoning_tokens=reasoning_tokens,
             )
-            
-            # Add reasoning tokens if present
-            if hasattr(response.usage, 'completion_tokens_details') and response.usage.completion_tokens_details:
-                reasoning_tokens = getattr(response.usage.completion_tokens_details, 'reasoning_tokens', None)
-                if reasoning_tokens is not None and hasattr(usage, '__dict__'):
-                    usage.__dict__['reasoning_tokens'] = reasoning_tokens
-            
+
             return ChatLLMResponse(
                 content=response.choices[0].message.parsed,
-                usage=usage
+                usage=usage,
             )
             
         if json_mode:
@@ -283,23 +284,25 @@ class ChatOpenAI(BaseChatLLM):
         if structured_output:
             response = await self.aclient.beta.chat.completions.parse(
                 **params,
-                response_format=structured_output
+                response_format=structured_output,
             )
-            
+
+            reasoning_tokens = None
+            if hasattr(response.usage, "completion_tokens_details") and response.usage.completion_tokens_details:
+                reasoning_tokens = getattr(
+                    response.usage.completion_tokens_details, "reasoning_tokens", None
+                )
+
             usage = ChatLLMUsage(
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens
+                total_tokens=response.usage.total_tokens,
+                reasoning_tokens=reasoning_tokens,
             )
-            
-            if hasattr(response.usage, 'completion_tokens_details') and response.usage.completion_tokens_details:
-                reasoning_tokens = getattr(response.usage.completion_tokens_details, 'reasoning_tokens', None)
-                if reasoning_tokens is not None and hasattr(usage, '__dict__'):
-                    usage.__dict__['reasoning_tokens'] = reasoning_tokens
-            
+
             return ChatLLMResponse(
                 content=response.choices[0].message.parsed,
-                usage=usage
+                usage=usage,
             )
 
         if json_mode:
@@ -339,18 +342,19 @@ class ChatOpenAI(BaseChatLLM):
             if not chunk.choices:
                 # Final chunk with usage
                 if chunk.usage:
+                    reasoning_tokens = None
+                    if hasattr(chunk.usage, "completion_tokens_details") and chunk.usage.completion_tokens_details:
+                        reasoning_tokens = getattr(
+                            chunk.usage.completion_tokens_details, "reasoning_tokens", None
+                        )
+
                     usage = ChatLLMUsage(
                         prompt_tokens=chunk.usage.prompt_tokens,
                         completion_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens
+                        total_tokens=chunk.usage.total_tokens,
+                        reasoning_tokens=reasoning_tokens,
                     )
-                    
-                    # Add reasoning tokens if present
-                    if hasattr(chunk.usage, 'completion_tokens_details') and chunk.usage.completion_tokens_details:
-                        reasoning_tokens = getattr(chunk.usage.completion_tokens_details, 'reasoning_tokens', None)
-                        if reasoning_tokens is not None and hasattr(usage, '__dict__'):
-                            usage.__dict__['reasoning_tokens'] = reasoning_tokens
-                    
+
                     yield ChatLLMResponse(usage=usage)
                 continue
             
@@ -393,17 +397,19 @@ class ChatOpenAI(BaseChatLLM):
         async for chunk in response:
             if not chunk.choices:
                 if chunk.usage:
+                    reasoning_tokens = None
+                    if hasattr(chunk.usage, "completion_tokens_details") and chunk.usage.completion_tokens_details:
+                        reasoning_tokens = getattr(
+                            chunk.usage.completion_tokens_details, "reasoning_tokens", None
+                        )
+
                     usage = ChatLLMUsage(
                         prompt_tokens=chunk.usage.prompt_tokens,
                         completion_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens
+                        total_tokens=chunk.usage.total_tokens,
+                        reasoning_tokens=reasoning_tokens,
                     )
-                    
-                    if hasattr(chunk.usage, 'completion_tokens_details') and chunk.usage.completion_tokens_details:
-                        reasoning_tokens = getattr(chunk.usage.completion_tokens_details, 'reasoning_tokens', None)
-                        if reasoning_tokens is not None and hasattr(usage, '__dict__'):
-                            usage.__dict__['reasoning_tokens'] = reasoning_tokens
-                    
+
                     yield ChatLLMResponse(usage=usage)
                 continue
             

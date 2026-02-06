@@ -5,6 +5,10 @@ class SharedBaseModel(BaseModel):
 
     model_config = ConfigDict(extra='allow')
     
+    evaluate: Literal["success", "neutral", "fail"] = Field(
+        "neutral",
+        description="Assessment of the previous action's outcome: 'success' if the last action achieved its goal, 'fail' if it did not produce the expected result, 'neutral' for the first action or when the outcome is unclear"
+    )
     thought: str = Field(
         ...,
         description="A rigorous thinking process where you analyze the current state, potential issues, and plan the next steps effectively. (max. 3 sentences)"
@@ -13,21 +17,21 @@ class SharedBaseModel(BaseModel):
 class App(SharedBaseModel):
     mode: Literal['launch', 'resize', 'switch'] = Field(
         'launch',
-        description="Operation mode: 'launch' opens the prescibed application, 'resize' adjusts active window size/position, 'switch' brings specific window into focus",
+        description="Operation mode: 'launch' opens the application from Start Menu, 'resize' adjusts the active window's size and position, 'switch' brings a specific open window into the foreground",
         examples=['launch']
     )
     name: Optional[str] = Field(
-        description="Exact application name as it appears in Start Menu (to launch) or window title of the opened application (to switch or resize)",
-        examples=['notepad', 'chrome', 'New tab - Personal - Microsoft Edge'],
+        description="Application name as it appears in Start Menu (for launch) or the window title as shown in the taskbar (for switch/resize). Example: 'Notepad' to launch, 'Untitled - Notepad' to switch.",
+        examples=['Notepad', 'Google Chrome', 'Untitled - Notepad'],
         default=None
     )
     loc: Optional[list[int]] = Field(
-        description="Target (x, y) coordinates for window top-left corner position (required for resize mode)",
+        description="Target [x, y] pixel coordinates for the window's top-left corner. Required for resize mode only.",
         examples=[[0, 0]],
         default=None
     )
     size: Optional[list[int]] = Field(
-        description="Target (width, height) dimensions in pixels for window size (required for resize mode)",
+        description="Target [width, height] in pixels for the window dimensions. Required for resize mode only.",
         examples=[[1920, 1080]],
         default=None
     )
@@ -35,56 +39,56 @@ class App(SharedBaseModel):
 class Done(SharedBaseModel):
     answer: str = Field(
         ...,
-        description="Answer in markdown format containing all requested information and task results",
-        examples=["## Task Completed\n\nThe task has been completed successfully. Here is the answer:\n- Item 1\n- Item 2"]
+        description="The response to deliver to the user, formatted in markdown. This is the ONLY way to communicate with the user.",
+        examples=["## Task Completed\n\nThe file has been saved to Desktop.", "Hello! How can I help you today?", "I was unable to find the file. The Downloads folder is empty."]
     )
 
 class Memory(SharedBaseModel):
     mode: Literal['view', 'read', 'write', 'delete', 'update'] = Field(
-        description="Operation mode: view (list files), read (get content), write (create), update (modify), delete (remove)"
+        description="Operation mode: 'view' lists all stored files, 'read' retrieves file content, 'write' creates a new file, 'update' modifies an existing file, 'delete' removes a file"
     )
     path: Optional[str] = Field(
         None,
-        description="Relative path from .memories directory (e.g., 'notes.md' or 'project/data.md'). Required for read, write, update, delete modes."
+        description="Relative file path from the .memories directory (e.g., 'notes.md', 'project/data.md'). Required for read, write, update, and delete."
     )
     content: Optional[str] = Field(
         None,
-        description="Content to write or insert. Required for write mode and insert operation."
+        description="Text content to write into the file. Required for 'write' mode and 'insert' operation in 'update' mode."
     )
     operation: Optional[Literal['replace', 'insert']] = Field(
         'replace',
-        description="Update operation type: replace (str replacement), insert (at line)"
+        description="Update strategy: 'replace' finds old_str and substitutes it with new_str, 'insert' adds content at a specific line number. Only used in 'update' mode."
     )
     old_str: Optional[str] = Field(
         None,
-        description="String to find and replace. Required when operation='replace'."
+        description="Exact string to find in the file. Required when operation='replace'."
     )
     new_str: Optional[str] = Field(
         None,
-        description="String to replace old_str with. Required when operation='replace'."
+        description="Replacement string. Required when operation='replace'."
     )
     line_number: Optional[int] = Field(
         None,
-        description="Line number for insertion (0-indexed). Required when operation='insert'."
+        description="0-indexed line number where content will be inserted. Required when operation='insert'."
     )
     read_range: Optional[list[int]] = Field(
         None,
-        description="Range of lines to read (start, end) - both 0-indexed, end is exclusive. Example: [0, 10] reads lines 0-9. Optional for read mode."
+        description="Optional [start, end] line range for partial reads (0-indexed, end exclusive). Example: [0, 10] reads lines 0 through 9."
     )
 
 class Click(SharedBaseModel):
     loc: list[int] = Field(
         ...,
-        description="(x, y) pixel coordinates within the target element's bounding box to perform click action",
+        description="[x, y] pixel coordinates of the target element to click. Use coordinates from the Interactive Elements list.",
         examples=[[640, 360], [100, 200]]
     )
     button: Literal['left', 'right', 'middle'] = Field(
-        description="Mouse button to use: 'left' for selection/activation, 'right' for context menus, 'middle' for browser-specific actions",
+        description="Mouse button: 'left' for standard clicks and selection, 'right' for context menus, 'middle' for middle-click actions",
         default='left',
         examples=['left', 'right']
     )
     clicks: Literal[0, 1, 2] = Field(
-        description="Click count: 0=hover only (no click), 1=single click (select/focus), 2=double click (open/activate)",
+        description="Number of clicks: 1 for single click (select, focus, press buttons), 2 for double click (open files, folders, apps), 0 for hover only (no click performed)",
         default=1,
         examples=[1, 2]
     )
@@ -92,84 +96,84 @@ class Click(SharedBaseModel):
 class Shell(SharedBaseModel):
     command: str = Field(
         ...,
-        description="PowerShell command to execute. Working directory is set to user's HOME. Returns output and exit status code",
+        description="PowerShell command to execute. Runs in the user's HOME directory. Use for file operations, system queries, installations, and automation tasks.",
         examples=[
             'Get-Process',
-            'ls',
+            'ls Desktop',
             'Get-ChildItem -Path C:\\Users -Recurse',
             'echo "Hello World"'
         ]
     )
     timeout: Optional[int] = Field(
-        description="Timeout in seconds for command execution",
+        description="Maximum seconds to wait for command completion. Increase for long-running operations.",
         default=10,
-        examples=[10, 20, 30]
+        examples=[10, 30, 60]
     )
 
 class Type(SharedBaseModel):
     loc: list[int] = Field(
         ...,
-        description="(x, y) pixel coordinates within the target input element's bounding box where text will be entered",
+        description="[x, y] pixel coordinates of the input field to type into. The tool clicks this location automatically before typing — do not pre-click.",
         examples=[[640, 360], [200, 150]]
     )
     text: str = Field(
         ...,
-        description="Text string to type into the focused element",
+        description="The text string to type into the element",
         examples=['hello world', 'user@example.com', 'search query']
     )
     clear: bool = Field(
-        description="Whether to clear existing text before typing: 'true' replaces all content, 'false' appends to existing text",
+        description="If true, selects all existing text and replaces it. If false, appends to whatever is already in the field.",
         default=False,
         examples=[True, False]
     )
     caret_position: Literal['start', 'idle', 'end'] = Field(
-        description="Caret positioning before typing: 'start' moves to beginning, 'end' moves to end, 'idle' leaves at current position",
+        description="Where to position the text cursor before typing: 'start' moves to the beginning of the field, 'end' moves to the end, 'idle' leaves it where it is",
         default='idle',
         examples=['start', 'end', 'idle']
     )
     press_enter: bool = Field(
-        description="Whether to press Enter key after typing text: 'true' submits/confirms input, 'false' leaves cursor in field",
+        description="If true, presses Enter after typing to submit the input (search, form, dialog). If false, leaves the cursor in the field.",
         default=False,
         examples=[True, False]
     )
 
 class MultiSelect(SharedBaseModel):
     press_ctrl: bool = Field(
-        description="Whether to press Ctrl key before performing multiple selection: 'true' selects multiple elements, 'false' leaves cursor in field",
+        description="If true, holds Ctrl while clicking each element to accumulate a multi-selection (files, checkboxes, list items). If false, clicks each location sequentially without Ctrl.",
         default=False,
         examples=[True, False]
     )
     elements: list[list[int]] = Field(
         ...,
-        description="List of (x, y) pixel coordinates within the target element's bounding box for multiple selection",
+        description="List of [x, y] pixel coordinates to click. Each coordinate pair is clicked in order.",
         examples=[[[640, 360], [800, 400]], [[100, 200], [200, 300]]]
     )
 
 class MultiEdit(SharedBaseModel):
     elements: list[list] = Field(
         ...,
-        description="List of [x, y, text] pixel coordinates within the target element's bounding box for multiple editing",
-        examples=[[[640, 360, 'hello'], [800, 400, 'world']], [[100, 200, 'foo'], [200, 300, 'bar']]]
+        description="List of [x, y, text] entries. For each entry, clicks the location (x, y) and types the text. Use to fill multiple form fields in one action.",
+        examples=[[[640, 360, 'hello'], [800, 400, 'world']], [[100, 200, 'John'], [200, 300, 'Doe']]]
     )
 
 class Scroll(SharedBaseModel):
     loc: Optional[list[int]] = Field(
-        description="(x, y) pixel coordinates where scroll action occurs. If None, scrolls at current cursor position",
+        description="[x, y] pixel coordinates where scrolling occurs. If omitted, scrolls at the current cursor position.",
         default=None,
-        examples=[[640, 360], [800, 400], None]
+        examples=[[640, 360], [800, 400]]
     )
     type: Literal['horizontal', 'vertical'] = Field(
-        description="Scroll direction type: 'vertical' for up/down scrolling, 'horizontal' for left/right scrolling",
+        description="Scroll axis: 'vertical' for up/down scrolling, 'horizontal' for left/right scrolling",
         default='vertical',
         examples=['vertical', 'horizontal']
     )
     direction: Literal['up', 'down', 'left', 'right'] = Field(
-        description="Scroll direction: 'up'/'down' for vertical, 'left'/'right' for horizontal movement through content",
+        description="Scroll direction: 'up' or 'down' for vertical, 'left' or 'right' for horizontal",
         default='down',
         examples=['down', 'up', 'right']
     )
     wheel_times: int = Field(
-        description="Number of scroll wheel increments (1 wheel ≈ 3-5 lines of text). Higher values scroll further",
+        description="Number of scroll increments. Each increment scrolls roughly 3-5 lines of text. Use 3-5 for moderate scrolling, 10+ for large jumps.",
         default=1,
         examples=[1, 3, 5, 10]
     )
@@ -177,11 +181,11 @@ class Scroll(SharedBaseModel):
 class Move(SharedBaseModel):
     loc: list[int] = Field(
         ...,
-        description="(x, y) pixel coordinates to move mouse cursor to. Used for hovering or drag-and-drop operations.",
+        description="[x, y] pixel coordinates to move the mouse cursor to",
         examples=[[640, 360], [100, 100]]
     )
     drag: bool = Field(
-        description="If True, performs a drag-and-drop operation from the current cursor position to the destination. If False, moves the cursor without clicking.",
+        description="If true, holds the left mouse button and drags from the current position to the target (drag-and-drop). If false, moves the cursor without clicking (hover).",
         default=False,
         examples=[True, False]
     )
@@ -189,37 +193,37 @@ class Move(SharedBaseModel):
 class Shortcut(SharedBaseModel):
     shortcut: str = Field(
         ...,
-        description="Keyboard shortcut to execute. Use '+' to separate simultaneous keys (e.g., 'ctrl+c'). Single keys work too (e.g., 'enter')",
-        examples=['win', 'enter', 'ctrl+c', 'alt+tab', 'ctrl+shift+n', 'escape']
+        description="Keyboard shortcut to press. Use '+' to combine keys for simultaneous press. Examples: 'ctrl+c' for copy, 'alt+tab' for window switch, 'enter' for confirm, 'escape' for cancel.",
+        examples=['enter', 'escape', 'ctrl+c', 'ctrl+v', 'alt+tab', 'ctrl+shift+n', 'win']
     )
 
 class Wait(SharedBaseModel):
     duration: int = Field(
         ...,
-        description="Time to pause execution in seconds. Use for waiting on app launches, page loads, or animations to complete",
+        description="Number of seconds to pause. Use to wait for applications to launch, pages to load, or animations to finish before the next action.",
         examples=[2, 5, 10]
     )
 
 class Scrape(SharedBaseModel):
     url: str = Field(
         ...,
-        description="Full webpage URL including protocol (http:// or https://) to fetch and convert to markdown format",
-        examples=['https://google.com', 'https://example.com/page', 'http://localhost:8080']
+        description="URL of the webpage currently open in the browser. The tool extracts visible text content from the rendered page via the accessibility tree and returns it as markdown.",
+        examples=['https://google.com', 'https://example.com/page']
     )
 
 class Desktop(SharedBaseModel):
     action: Literal['create', 'remove', 'rename', 'switch'] = Field(
         ...,
-        description="Action to perform on virtual desktop",
-        examples=['create', 'remove', 'rename', 'switch']
+        description="Virtual desktop action: 'create' adds a new desktop, 'remove' deletes a desktop by name, 'rename' changes a desktop's name, 'switch' activates a desktop by name",
+        examples=['create', 'switch', 'rename', 'remove']
     )
     desktop_name: Optional[str] = Field(
-        description="Name of the desktop to perform action on (e.g. 'Desktop 1', 'My Workspace'). Required for remove, rename, switch.",
+        description="Name of the target desktop. Required for remove, rename, and switch. Optional for create (auto-named if omitted).",
         default=None,
-        examples=["My Workspace", "Desktop 2"]
+        examples=["Desktop 1", "Work", "Research"]
     )
     new_name: Optional[str] = Field(
-        description="New name to set for the desktop (used with rename). For create, use desktop_name argument.",
+        description="New name for the desktop. Required for rename only.",
         default=None,
-        examples=["Work Project"]
+        examples=["My Workspace", "Project Alpha"]
     )

@@ -1,4 +1,4 @@
-from windows_use.uia import Control,ImageControl,ScrollPattern,WindowControl,Rect,GetRootControl,PatternId,AccessibleRoleNames,PaneControl,GroupControl,StructureChangeType,TreeScope,ControlFromHandle
+from windows_use.uia import Control,EditControl,ImageControl,ScrollPattern,WindowControl,Rect,GetRootControl,PatternId,AccessibleRoleNames,PaneControl,GroupControl,StructureChangeType,TreeScope,ControlFromHandle
 from windows_use.agent.tree.config import INTERACTIVE_CONTROL_TYPE_NAMES,DOCUMENT_CONTROL_TYPE_NAMES,INFORMATIVE_CONTROL_TYPE_NAMES, DEFAULT_ACTIONS, INTERACTIVE_ROLES, THREAD_MAX_RETRIES
 from windows_use.agent.tree.views import TreeElementNode, ScrollElementNode, TextElementNode, Center, BoundingBox, TreeState
 from windows_use.agent.tree.cache_utils import CacheRequestFactory,CachedControlHelper
@@ -231,7 +231,7 @@ class Tree:
             dom_interactive_nodes.append(TreeElementNode(**{
                 'name':node.Name.strip(),
                 'control_type':control_type,
-                'value':node.Name.strip(),
+                'value': node.Name.strip(),
                 'shortcut':node.AcceleratorKey,
                 'bounding_box':bounding_box,
                 'xpath':'',

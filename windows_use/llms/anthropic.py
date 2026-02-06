@@ -228,14 +228,11 @@ class ChatAnthropic(BaseChatLLM):
         usage = ChatLLMUsage(
             prompt_tokens=usage_data.input_tokens,
             completion_tokens=usage_data.output_tokens,
-            total_tokens=usage_data.input_tokens + usage_data.output_tokens
+            total_tokens=usage_data.input_tokens + usage_data.output_tokens,
+            cache_creation_input_tokens=cache_creation_tokens or None,
+            cache_read_input_tokens=cache_read_tokens or None,
         )
-        
-        # Add cache metrics if they exist
-        if hasattr(usage, '__dict__'):
-            usage.__dict__['cache_creation_input_tokens'] = cache_creation_tokens
-            usage.__dict__['cache_read_input_tokens'] = cache_read_tokens
-        
+
         # Log cache usage
         if cache_creation_tokens > 0:
             logger.debug(f"Cache created: {cache_creation_tokens} tokens")
@@ -322,16 +319,14 @@ class ChatAnthropic(BaseChatLLM):
             usage = ChatLLMUsage(
                 prompt_tokens=response.usage.input_tokens,
                 completion_tokens=response.usage.output_tokens,
-                total_tokens=response.usage.input_tokens + response.usage.output_tokens
+                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+                cache_creation_input_tokens=cache_creation_tokens or None,
+                cache_read_input_tokens=cache_read_tokens or None,
             )
-            
-            if hasattr(usage, '__dict__'):
-                usage.__dict__['cache_creation_input_tokens'] = cache_creation_tokens
-                usage.__dict__['cache_read_input_tokens'] = cache_read_tokens
-            
+
             return ChatLLMResponse(
                 content=parsed,
-                usage=usage
+                usage=usage,
             )
 
         response = self.client.messages.create(**params)
@@ -384,16 +379,14 @@ class ChatAnthropic(BaseChatLLM):
             usage = ChatLLMUsage(
                 prompt_tokens=response.usage.input_tokens,
                 completion_tokens=response.usage.output_tokens,
-                total_tokens=response.usage.input_tokens + response.usage.output_tokens
+                total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+                cache_creation_input_tokens=cache_creation_tokens or None,
+                cache_read_input_tokens=cache_read_tokens or None,
             )
-            
-            if hasattr(usage, '__dict__'):
-                usage.__dict__['cache_creation_input_tokens'] = cache_creation_tokens
-                usage.__dict__['cache_read_input_tokens'] = cache_read_tokens
-            
+
             return ChatLLMResponse(
                 content=parsed,
-                usage=usage
+                usage=usage,
             )
 
         response = await self.aclient.messages.create(**params)
