@@ -506,8 +506,8 @@ class Tree:
                 # Incrementally building the xpath
                 
                 # Check if the child is a DOM element
-                if is_browser and child.AutomationId=="RootWebArea":
-                    bounding_box=child.BoundingRectangle
+                if is_browser and child.CachedAutomationId=="RootWebArea":
+                    bounding_box=child.CachedBoundingRectangle
                     self.dom_bounding_box=BoundingBox(left=bounding_box.left,top=bounding_box.top,
                     right=bounding_box.right,bottom=bounding_box.bottom,width=bounding_box.width(),
                     height=bounding_box.height())
@@ -516,9 +516,9 @@ class Tree:
                     self.tree_traversal(child, window_bounding_box, window_name, is_browser, interactive_nodes, scrollable_nodes, dom_interactive_nodes, dom_informative_nodes, is_dom=True, is_dialog=is_dialog, element_cache_req=element_cache_req, children_cache_req=children_cache_req)
                 # Check if the child is a dialog
                 elif isinstance(child,WindowControl):
-                    if not child.IsOffscreen:
+                    if not child.CachedIsOffscreen:
                         if is_dom:
-                            bounding_box=child.BoundingRectangle
+                            bounding_box=child.CachedBoundingRectangle
                             if bounding_box.width() > 0.8*self.dom_bounding_box.width:
                                 # Because this window element covers the majority of the screen
                                 dom_interactive_nodes.clear()
@@ -526,13 +526,11 @@ class Tree:
                             # Inline is_window_modal
                             is_modal = False
                             try:
-                                window_pattern = child.GetCachedPattern(PatternId.WindowPattern, True)
-                                is_modal = window_pattern.IsModal
+                                is_modal = child.GetCachedPropertyValue(PropertyId.WindowIsModalProperty)
                             except Exception:
-                                pass
+                                is_modal = False
                                 
                             if is_modal:
-                                # Because this window element is modal
                                 interactive_nodes.clear()
                     # enter dialog subtree
                     self.tree_traversal(child, window_bounding_box, window_name, is_browser, interactive_nodes, scrollable_nodes, dom_interactive_nodes, dom_informative_nodes, is_dom=is_dom, is_dialog=True, element_cache_req=element_cache_req, children_cache_req=children_cache_req)
